@@ -35,6 +35,9 @@ app.config["PERMANENT_SESSION_LIFETIME"] = 86400  # 1 day
 
 app.register_blueprint(main_bp)
 
+# Initialize DB when app is loaded (needed for gunicorn / Render)
+init_db()
+
 
 @app.route("/dashboard")
 def dashboard_redirect():
