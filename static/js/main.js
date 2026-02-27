@@ -478,8 +478,16 @@
         if (chatPanel) {
             chatPanel.classList.add('open');
             chatPanel.setAttribute('aria-hidden', 'false');
-            chatInput.focus();
+            if (chatInput) chatInput.focus();
         }
+    }
+    function chatHideWelcome() {
+        var w = document.getElementById('chatWelcome');
+        if (w) w.classList.add('hidden');
+    }
+    function chatShowWelcome() {
+        var w = document.getElementById('chatWelcome');
+        if (w) w.classList.remove('hidden');
     }
     function chatClose() {
         if (chatPanel) {
@@ -528,6 +536,7 @@
     }
     function chatAppendMessage(role, text) {
         if (!chatMessages) return;
+        chatHideWelcome();
         var time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         var div = document.createElement('div');
         div.className = 'chat-msg ' + role;
@@ -586,11 +595,20 @@
     if (chatInput) {
         chatInput.addEventListener('keydown', function (e) {
             if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
+                e.preventDefault();
                 chatSend();
             }
         });
     }
+    document.querySelectorAll('.chat-chip').forEach(function (chip) {
+        chip.addEventListener('click', function () {
+            var msg = this.getAttribute('data-msg');
+            if (msg && chatInput) {
+                chatInput.value = msg;
+                chatSend();
+            }
+        });
+    });
 
     showPage('dashboard');
 })();
