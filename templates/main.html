@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attendance System — Admin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=6">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v=6">
+</head>
+<body class="admin-body">
+    <aside class="sidebar" aria-label="Main navigation">
+        <div class="sidebar-brand">
+            <h1 class="sidebar-logo">Attendance</h1>
+            <span class="sidebar-tagline">Admin</span>
+        </div>
+        <nav class="sidebar-nav">
+            <button type="button" class="nav-item active" data-page="dashboard" aria-current="page">
+                <span class="nav-icon" aria-hidden="true">◉</span> Dashboard
+            </button>
+            <button type="button" class="nav-item" data-page="sections">
+                <span class="nav-icon" aria-hidden="true">▣</span> Sections
+            </button>
+            <button type="button" class="nav-item" data-page="students">
+                <span class="nav-icon" aria-hidden="true">☺</span> Students
+            </button>
+            <button type="button" class="nav-item" data-page="mark">
+                <span class="nav-icon" aria-hidden="true">✓</span> Mark Attendance
+            </button>
+            <button type="button" class="nav-item" data-page="records">
+                <span class="nav-icon" aria-hidden="true">≡</span> Attendance Records
+            </button>
+            <button type="button" class="nav-item" data-page="settings">
+                <span class="nav-icon" aria-hidden="true">⚙</span> Settings
+            </button>
+            <button type="button" class="nav-item nav-item-logout" data-page="logout">
+                <span class="nav-icon" aria-hidden="true">→</span> Logout
+            </button>
+        </nav>
+    </aside>
+    <main class="main-content" id="mainContent">
+        <!-- Pages injected by JS -->
+        <div id="pageDashboard" class="page active"></div>
+        <div id="pageSections" class="page"></div>
+        <div id="pageStudents" class="page"></div>
+        <div id="pageMark" class="page"></div>
+        <div id="pageRecords" class="page"></div>
+        <div id="pageSettings" class="page"></div>
+    </main>
+
+    <!-- Toast container -->
+    <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+    <!-- Chat: floating button + slide-in panel -->
+    <button type="button" id="chatFloatingBtn" class="chat-floating-btn" aria-label="Open Attendance Assistant" title="Attendance Assistant">
+        <span class="chat-btn-icon" aria-hidden="true">💬</span>
+    </button>
+    <div id="chatPanel" class="chat-panel" aria-hidden="true">
+        <header class="chat-header">
+            <h2 class="chat-title">Attendance Assistant</h2>
+            <button type="button" id="chatCloseBtn" class="chat-close-btn" aria-label="Close chat">×</button>
+        </header>
+        <div class="chat-body">
+            <div id="chatMessages" class="chat-messages" role="log" aria-live="polite"></div>
+        </div>
+        <footer class="chat-footer">
+            <input type="text" id="chatInput" class="chat-input" placeholder="Ask about attendance…" maxlength="1000" autocomplete="off">
+            <button type="button" id="chatSendBtn" class="chat-send-btn">Send</button>
+        </footer>
+    </div>
+
+    <!-- Modals -->
+    <div id="modalSection" class="modal-overlay" aria-hidden="true" role="dialog">
+        <div class="modal-panel">
+            <h2 id="modalSectionTitle" class="modal-title">Add Section</h2>
+            <form id="formSection">
+                <div class="form-group">
+                    <label for="sectionName">Section name</label>
+                    <input type="text" id="sectionName" required placeholder="e.g. ECE A" autocomplete="off">
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary btn-cancel-section">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="modalStudent" class="modal-overlay" aria-hidden="true" role="dialog">
+        <div class="modal-panel">
+            <h2 id="modalStudentTitle" class="modal-title">Add Student</h2>
+            <form id="formStudent">
+                <input type="hidden" id="studentId" value="">
+                <div class="form-group">
+                    <label for="studentSection">Section</label>
+                    <select id="studentSection" required></select>
+                </div>
+                <div class="form-group">
+                    <label for="studentRollNo">Roll number</label>
+                    <input type="text" id="studentRollNo" required placeholder="e.g. 101" autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label for="studentName">Name</label>
+                    <input type="text" id="studentName" required placeholder="Full name" autocomplete="name">
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary btn-cancel-student">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="modalConfirm" class="modal-overlay" aria-hidden="true" role="dialog">
+        <div class="modal-panel modal-panel-sm">
+            <h2 class="modal-title" id="modalConfirmTitle">Confirm</h2>
+            <p id="modalConfirmBody" class="modal-body"></p>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" id="btnConfirmCancel">Cancel</button>
+                <button type="button" class="btn btn-danger" id="btnConfirmOk">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}?v=6"></script>
+</body>
+</html>
