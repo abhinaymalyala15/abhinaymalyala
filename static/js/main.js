@@ -20,6 +20,14 @@
     }
 
     function showPage(pageId) {
+        var sidebar = document.getElementById('sidebar');
+        var backdrop = document.getElementById('sidebarBackdrop');
+        var toggle = document.getElementById('sidebarToggle');
+        if (sidebar && sidebar.classList.contains('closed') === false && window.matchMedia('(max-width: 768px)').matches) {
+            sidebar.classList.add('closed');
+            if (backdrop) { backdrop.classList.remove('visible'); backdrop.setAttribute('aria-hidden', 'true'); }
+            if (toggle) toggle.setAttribute('aria-expanded', 'false');
+        }
         pages.forEach(function (p) {
             var el = document.getElementById('page' + p.charAt(0).toUpperCase() + p.slice(1));
             if (el) el.classList.toggle('active', p === pageId);
@@ -34,19 +42,20 @@
         else if (pageId === 'mark') renderMarkAttendance();
         else if (pageId === 'records') renderRecords();
         else if (pageId === 'settings') renderSettings();
-        else if (pageId === 'logout') window.location.reload();
+        else if (pageId === 'logout') openLogoutModal();
     }
 
     function toast(message, type) {
         type = type || 'success';
         var el = document.createElement('div');
         el.className = 'toast ' + type;
-        el.setAttribute('role', 'alert');
+        el.setAttribute('role', type === 'error' ? 'alert' : 'status');
+        el.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
         el.textContent = message;
         toastContainer.appendChild(el);
         setTimeout(function () {
             if (el.parentNode) el.parentNode.removeChild(el);
-        }, 3500);
+        }, type === 'error' ? 5000 : 3500);
     }
 
     function api(path, options) {
@@ -63,10 +72,63 @@
         });
     }
 
+    var lastFocusedBeforeModal = null;
+
+    function getFocusables(container) {
+        var sel = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+        return Array.prototype.filter.call(container.querySelectorAll(sel), function (el) {
+            return !el.disabled && el.offsetParent !== null;
+        });
+    }
+
+    function trapFocus(modalEl) {
+        var focusables = getFocusables(modalEl);
+        if (focusables.length === 0) return;
+        focusables[0].focus();
+        modalEl.addEventListener('keydown', function onKey(e) {
+            if (e.key !== 'Tab') return;
+            var first = focusables[0];
+            var last = focusables[focusables.length - 1];
+            if (e.shiftKey) {
+                if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+            } else {
+                if (document.activeElement === last) { e.preventDefault(); first.focus(); }
+            }
+        });
+    }
+
+    function openModal(modalId, firstFocusSelector) {
+        var modal = document.getElementById(modalId);
+        if (!modal) return;
+        lastFocusedBeforeModal = document.activeElement;
+        modal.setAttribute('aria-hidden', 'false');
+        modal.classList.add('show');
+        var first = firstFocusSelector ? modal.querySelector(firstFocusSelector) : null;
+        var focusables = getFocusables(modal);
+        if (first) first.focus();
+        else if (focusables.length) focusables[0].focus();
+        modal.addEventListener('keydown', function onEsc(e) {
+            if (e.key === 'Escape') { closeModal(modalId); modal.removeEventListener('keydown', onEsc); }
+        });
+    }
+
+    function closeModal(modalId) {
+        var modal = document.getElementById(modalId);
+        if (!modal) return;
+        modal.setAttribute('aria-hidden', 'true');
+        modal.classList.remove('show');
+        if (lastFocusedBeforeModal && typeof lastFocusedBeforeModal.focus === 'function') lastFocusedBeforeModal.focus();
+    }
+
     // ----- Dashboard -----
+    var dashboardSkeletonHtml = '<div class="summary-card skeleton-card"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-value"></div></div>' +
+        '<div class="summary-card skeleton-card"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-value"></div></div>' +
+        '<div class="summary-card skeleton-card"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-value"></div></div>' +
+        '<div class="summary-card skeleton-card"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-value"></div></div>';
+
     function renderDashboard() {
         var wrap = document.getElementById('pageDashboard');
-        wrap.innerHTML = '<div class="page-header"><h2>Dashboard</h2><p>Overview of your attendance system</p></div><div class="cards-grid" id="dashboardCards">Loading…</div>';
+        wrap.innerHTML = '<div class="page-header"><h2>Dashboard</h2><p>Overview of sections, students, and today’s attendance</p></div><div class="cards-grid" id="dashboardCards">' + dashboardSkeletonHtml + '</div>';
         api('/api/dashboard/stats').then(function (data) {
             document.getElementById('dashboardCards').innerHTML =
                 '<div class="summary-card"><div class="card-label">Total Sections</div><div class="card-value">' + (data.total_sections || 0) + '</div></div>' +
@@ -74,19 +136,24 @@
                 '<div class="summary-card"><div class="card-label">Attendance Marked Today</div><div class="card-value">' + (data.attendance_marked_today || 0) + '</div></div>' +
                 '<div class="summary-card"><div class="card-label">Total Absentees Today</div><div class="card-value">' + (data.absent_today || 0) + '</div></div>';
         }).catch(function () {
-            document.getElementById('dashboardCards').innerHTML = '<div class="empty-state">Failed to load stats.</div>';
+            document.getElementById('dashboardCards').innerHTML = '<div class="empty-state">Unable to load stats. Check your connection and try again.</div>';
         });
     }
 
     // ----- Sections -----
+    var sectionsSkeletonHtml = '<div class="section-card skeleton-card"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line short"></div><div class="skeleton skeleton-line" style="width:40%"></div></div>' +
+        '<div class="section-card skeleton-card"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line short"></div><div class="skeleton skeleton-line" style="width:40%"></div></div>' +
+        '<div class="section-card skeleton-card"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line short"></div><div class="skeleton skeleton-line" style="width:40%"></div></div>';
+
     function renderSections() {
         var wrap = document.getElementById('pageSections');
-        wrap.innerHTML = '<div class="page-header"><h2>Sections</h2><p>Manage sections</p></div><div class="actions-row"><button type="button" class="btn btn-primary" id="btnAddSection">+ Add Section</button></div><div class="section-cards" id="sectionCards">Loading…</div>';
+        wrap.innerHTML = '<div class="page-header"><h2>Sections</h2><p>Manage class sections and groups</p></div><div class="actions-row"><button type="button" class="btn btn-primary" id="btnAddSection">+ Add Section</button></div><div class="section-cards" id="sectionCards">' + sectionsSkeletonHtml + '</div>';
         api('/api/sections?stats=1').then(function (list) {
             sectionsCache = list || [];
             var cards = document.getElementById('sectionCards');
             if (sectionsCache.length === 0) {
-                cards.innerHTML = '<div class="empty-state">No sections. Click Add Section.</div>';
+                cards.innerHTML = '<div class="empty-state"><p>No sections yet. Add your first section to start managing students and attendance.</p><button type="button" class="btn btn-primary" id="emptyAddSection">+ Add Section</button></div>';
+                document.getElementById('emptyAddSection').onclick = function () { openSectionModal(null); };
                 return;
             }
             cards.innerHTML = sectionsCache.map(function (s) {
@@ -100,12 +167,15 @@
                 b.addEventListener('click', function (e) { e.stopPropagation(); confirmDeleteSection(parseInt(b.getAttribute('data-id'), 10)); });
             });
         }).catch(function () {
-            document.getElementById('sectionCards').innerHTML = '<div class="empty-state">Failed to load.</div>';
+            document.getElementById('sectionCards').innerHTML = '<div class="empty-state">Could not load sections. Try again or check your connection.</div>';
         });
-        document.getElementById('btnAddSection').onclick = function () { openSectionModal(null); };
+        var btnAdd = document.getElementById('btnAddSection');
+        if (btnAdd) btnAdd.onclick = function () { openSectionModal(null); };
     }
 
     function openSectionModal(id) {
+        var errEl = document.getElementById('sectionNameError');
+        if (errEl) errEl.textContent = '';
         var title = document.getElementById('modalSectionTitle');
         var nameInput = document.getElementById('sectionName');
         var form = document.getElementById('formSection');
@@ -119,16 +189,19 @@
             nameInput.value = '';
             delete form.dataset.editId;
         }
-        document.getElementById('modalSection').classList.add('show');
+        openModal('modalSection', '#sectionName');
     }
 
     function closeSectionModal() {
-        document.getElementById('modalSection').classList.remove('show');
+        closeModal('modalSection');
     }
 
     document.getElementById('formSection').addEventListener('submit', function (e) {
         e.preventDefault();
-        var name = document.getElementById('sectionName').value.trim();
+        var nameInput = document.getElementById('sectionName');
+        var name = nameInput.value.trim();
+        var errEl = document.getElementById('sectionNameError');
+        if (errEl) errEl.textContent = '';
         if (!name) return;
         var id = this.dataset.editId;
         var req = id ? api('/api/sections/' + id, { method: 'PATCH', body: { name: name } }) : api('/api/sections', { method: 'POST', body: { name: name } });
@@ -137,7 +210,9 @@
             toast('Section saved.');
             renderSections();
         }).catch(function (err) {
-            toast(err.message, 'error');
+            var msg = err && err.message ? err.message : 'Could not save section.';
+            if (errEl) { errEl.textContent = msg; errEl.setAttribute('role', 'alert'); }
+            toast(msg, 'error');
         });
     });
     document.querySelector('.btn-cancel-section').onclick = closeSectionModal;
@@ -147,10 +222,10 @@
         var s = sectionsCache.find(function (x) { return x.id === id; });
         document.getElementById('modalConfirmTitle').textContent = 'Delete Section';
         document.getElementById('modalConfirmBody').textContent = 'Delete section "' + (s ? s.name : '') + '"? All students and attendance in this section will be removed.';
-        document.getElementById('modalConfirm').classList.add('show');
+        openModal('modalConfirm', '#btnConfirmCancel');
         document.getElementById('btnConfirmOk').onclick = function () {
             api('/api/sections/' + id, { method: 'DELETE' }).then(function () {
-                document.getElementById('modalConfirm').classList.remove('show');
+                closeModal('modalConfirm');
                 toast('Section deleted.');
                 renderSections();
             }).catch(function (err) {
@@ -159,17 +234,18 @@
         };
     }
 
-    document.getElementById('btnConfirmCancel').onclick = function () { document.getElementById('modalConfirm').classList.remove('show'); };
-    document.getElementById('modalConfirm').onclick = function (e) { if (e.target === this) this.classList.remove('show'); };
+    document.getElementById('btnConfirmCancel').onclick = function () { closeModal('modalConfirm'); };
+    document.getElementById('modalConfirm').onclick = function (e) { if (e.target === this) closeModal('modalConfirm'); };
 
     // ----- Students -----
     var studentsPage = 1, studentsPerPage = 25, studentsTotal = 0, studentsSectionId = null, studentsSearch = '', studentsSortBy = 'roll_no';
 
     function renderStudents() {
         var wrap = document.getElementById('pageStudents');
-        wrap.innerHTML = '<div class="page-header"><h2>Students</h2><p>Manage students</p></div>' +
+        var skeletonRows = Array(5).join('<tr><td><span class="skeleton skeleton-line" style="display:block;width:60px;height:14px"></span></td><td><span class="skeleton skeleton-line" style="display:block;width:120px;height:14px"></span></td><td><span class="skeleton skeleton-line" style="display:block;width:80px;height:14px"></span></td><td></td></tr>');
+        wrap.innerHTML = '<div class="page-header"><h2>Students</h2><p>Manage students by section</p></div>' +
             '<div class="actions-row"><input type="text" class="search-input" id="studentsSearch" placeholder="Search roll or name"><select id="studentsSectionFilter"><option value="">All sections</option></select><select id="studentsPerPage"><option value="10">10 per page</option><option value="25" selected>25 per page</option><option value="50">50 per page</option></select><button type="button" class="btn btn-primary" id="btnAddStudent">+ Add Student</button></div>' +
-            '<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Roll No <button type="button" class="btn btn-sm btn-secondary sort-btn" data-sort="roll_no">↕</button></th><th>Name <button type="button" class="btn btn-sm btn-secondary sort-btn" data-sort="name">↕</button></th><th>Section</th><th></th></tr></thead><tbody id="studentsTbody"></tbody></table></div>' +
+            '<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Roll No <button type="button" class="btn btn-sm btn-secondary sort-btn" data-sort="roll_no">↕</button></th><th>Name <button type="button" class="btn btn-sm btn-secondary sort-btn" data-sort="name">↕</button></th><th>Section</th><th></th></tr></thead><tbody id="studentsTbody">' + skeletonRows + '</tbody></table></div>' +
             '<div class="pagination-bar" id="studentsPagination"></div>';
         loadSectionsForSelect(document.getElementById('studentsSectionFilter'));
         loadStudentsList();
@@ -205,16 +281,22 @@
             var list = out.list;
             var sectionsByName = out.sectionsByName;
             var tbody = document.getElementById('studentsTbody');
-            tbody.innerHTML = list.map(function (st) {
-                var secName = sectionsByName[st.section_id] || '—';
-                return '<tr><td>' + escapeHtml(st.roll_no) + '</td><td>' + escapeHtml(st.name) + '</td><td>' + escapeHtml(secName) + '</td><td><button type="button" class="btn btn-sm btn-secondary btn-edit-student" data-id="' + st.id + '">Edit</button> <button type="button" class="btn btn-sm btn-danger btn-delete-student" data-id="' + st.id + '">Delete</button></td></tr>';
+            if (list.length === 0 && !studentsSearch && !studentsSectionId) {
+                tbody.innerHTML = '<tr><td colspan="4"><div class="empty-state"><p>No students yet. Add your first student to get started.</p><button type="button" class="btn btn-primary empty-add-student">+ Add Student</button></div></td></tr>';
+                var emptyBtn = tbody.querySelector('.empty-add-student');
+                if (emptyBtn) emptyBtn.onclick = function () { openStudentModal(null); };
+            } else {
+                tbody.innerHTML = list.map(function (st) {
+                    var secName = sectionsByName[st.section_id] || '—';
+                    return '<tr><td>' + escapeHtml(st.roll_no) + '</td><td>' + escapeHtml(st.name) + '</td><td>' + escapeHtml(secName) + '</td><td><button type="button" class="btn btn-sm btn-secondary btn-edit-student" data-id="' + st.id + '">Edit</button> <button type="button" class="btn btn-sm btn-danger btn-delete-student" data-id="' + st.id + '">Delete</button></td></tr>';
                 }).join('');
-            tbody.querySelectorAll('.btn-edit-student').forEach(function (b) {
-                b.onclick = function () { openStudentModal(parseInt(b.getAttribute('data-id'), 10)); };
-            });
-            tbody.querySelectorAll('.btn-delete-student').forEach(function (b) {
-                b.onclick = function () { confirmDeleteStudent(parseInt(b.getAttribute('data-id'), 10)); };
-            });
+                tbody.querySelectorAll('.btn-edit-student').forEach(function (b) {
+                    b.onclick = function () { openStudentModal(parseInt(b.getAttribute('data-id'), 10)); };
+                });
+                tbody.querySelectorAll('.btn-delete-student').forEach(function (b) {
+                    b.onclick = function () { confirmDeleteStudent(parseInt(b.getAttribute('data-id'), 10)); };
+                });
+            }
             var totalPages = Math.ceil(studentsTotal / studentsPerPage) || 1;
             var pag = document.getElementById('studentsPagination');
             pag.innerHTML = '<span>Total: ' + studentsTotal + '</span>';
@@ -229,11 +311,13 @@
                 });
             }
         }).catch(function () {
-            document.getElementById('studentsTbody').innerHTML = '<tr><td colspan="4">Failed to load.</td></tr>';
+            document.getElementById('studentsTbody').innerHTML = '<tr><td colspan="4"><div class="empty-state">Could not load students. Try again.</div></td></tr>';
         });
     }
 
     function openStudentModal(id) {
+        var errEl = document.getElementById('studentFormError');
+        if (errEl) errEl.textContent = '';
         loadSectionsForSelect(document.getElementById('studentSection'));
         var title = document.getElementById('modalStudentTitle');
         if (id != null) {
@@ -253,11 +337,13 @@
             document.getElementById('studentRollNo').value = '';
             document.getElementById('studentName').value = '';
         }
-        document.getElementById('modalStudent').classList.add('show');
+        openModal('modalStudent', '#studentSection');
     }
 
     document.getElementById('formStudent').addEventListener('submit', function (e) {
         e.preventDefault();
+        var errEl = document.getElementById('studentFormError');
+        if (errEl) errEl.textContent = '';
         var id = document.getElementById('studentId').value;
         var sectionId = parseInt(document.getElementById('studentSection').value, 10);
         var rollNo = document.getElementById('studentRollNo').value.trim();
@@ -265,23 +351,25 @@
         if (!rollNo || !name || !sectionId) return;
         var req = id ? api('/api/students/' + id, { method: 'PATCH', body: { section_id: sectionId, roll_no: rollNo, name: name } }) : api('/api/students', { method: 'POST', body: { section_id: sectionId, roll_no: rollNo, name: name } });
         req.then(function () {
-            document.getElementById('modalStudent').classList.remove('show');
+            closeModal('modalStudent');
             toast('Student saved.');
             loadStudentsList();
         }).catch(function (err) {
-            toast(err.message, 'error');
+            var msg = err && err.message ? err.message : 'Could not save student.';
+            if (errEl) { errEl.textContent = msg; errEl.setAttribute('role', 'alert'); }
+            toast(msg, 'error');
         });
     });
-    document.querySelector('.btn-cancel-student').onclick = function () { document.getElementById('modalStudent').classList.remove('show'); };
-    document.getElementById('modalStudent').onclick = function (e) { if (e.target === this) this.classList.remove('show'); };
+    document.querySelector('.btn-cancel-student').onclick = function () { closeModal('modalStudent'); };
+    document.getElementById('modalStudent').onclick = function (e) { if (e.target === this) closeModal('modalStudent'); };
 
     function confirmDeleteStudent(id) {
         document.getElementById('modalConfirmTitle').textContent = 'Delete Student';
         document.getElementById('modalConfirmBody').textContent = 'Delete this student? Attendance records will be removed.';
-        document.getElementById('modalConfirm').classList.add('show');
+        openModal('modalConfirm', '#btnConfirmCancel');
         document.getElementById('btnConfirmOk').onclick = function () {
             api('/api/students/' + id, { method: 'DELETE' }).then(function () {
-                document.getElementById('modalConfirm').classList.remove('show');
+                closeModal('modalConfirm');
                 toast('Student deleted.');
                 loadStudentsList();
             }).catch(function (err) { toast(err.message, 'error'); });
@@ -291,19 +379,20 @@
     // ----- Mark Attendance -----
     function renderMarkAttendance() {
         var today = new Date().toISOString().slice(0, 10);
+        var defaultSession = typeof getDefaultSession === 'function' ? getDefaultSession() : 'morning';
         var wrap = document.getElementById('pageMark');
         wrap.innerHTML = '<div class="page-header"><h2>Mark Attendance</h2><p>Select section, date and session then mark status</p></div>' +
             '<div class="toolbar" id="markToolbar">' +
             '<div class="form-group"><label>Section</label><select id="markSection"><option value="">Select section</option></select></div>' +
             '<div class="form-group"><label>Date</label><input type="date" id="markDate" value="' + today + '"></div>' +
-            '<div class="form-group"><label>Session</label><select id="markSession"><option value="morning">Morning</option><option value="afternoon">Afternoon</option></select></div>' +
+            '<div class="form-group"><label>Session</label><select id="markSession"><option value="morning"' + (defaultSession === 'morning' ? ' selected' : '') + '>Morning</option><option value="afternoon"' + (defaultSession === 'afternoon' ? ' selected' : '') + '>Afternoon</option></select></div>' +
             '<button type="button" class="btn btn-primary" id="markLoadBtn">Load Students</button>' +
             '</div>' +
             '<div id="markWarning" class="warning-banner" style="display:none"></div>' +
             '<div class="actions-row"><input type="text" class="search-input" id="markSearch" placeholder="Search student"><button type="button" class="btn btn-secondary btn-sm" id="markAllPresent">Select All Present</button><button type="button" class="btn btn-secondary btn-sm" id="markAllAbsent">Select All Absent</button></div>' +
             '<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Roll No</th><th>Name</th><th>Status</th></tr></thead><tbody id="markTbody"></tbody></table></div>' +
             '<div id="markSummary" class="summary-panel" style="display:none"></div>' +
-            '<button type="button" class="btn btn-primary" id="markSaveBtn" disabled>Save Attendance</button>';
+            '<div class="actions-row" style="align-items:center;margin-top:16px"><button type="button" class="btn btn-primary" id="markSaveBtn" disabled>Save Attendance</button><span class="keyboard-hint" id="markSaveHint">Ctrl+S when ready</span></div>';
         loadSectionsForSelect(document.getElementById('markSection'));
         document.getElementById('markLoadBtn').onclick = loadMarkAttendance;
         document.getElementById('markSection').onchange = document.getElementById('markDate').onchange = document.getElementById('markSession').onchange = function () {
@@ -424,7 +513,7 @@
         var dateStr = document.getElementById('recordsDate').value;
         var session = document.getElementById('recordsSession').value;
         if (!sectionId || !dateStr) {
-            document.getElementById('recordsTbody').innerHTML = '<tr><td colspan="3">Select section and date, then click Load.</td></tr>';
+            document.getElementById('recordsTbody').innerHTML = '<tr><td colspan="3"><div class="empty-state"><p>Choose a section and date above, then click <strong>Load</strong> to view attendance records.</p></div></td></tr>';
             return;
         }
         var q = '?section_id=' + sectionId + '&date=' + encodeURIComponent(dateStr) + '&session=' + encodeURIComponent(session) + '&page=' + recordsPage + '&per_page=' + recordsPerPage;
@@ -455,18 +544,72 @@
     }
 
     // ----- Settings -----
-    function renderSettings() {
-        document.getElementById('pageSettings').innerHTML = '<div class="page-header"><h2>Settings</h2><p>System settings</p></div><div class="settings-placeholder">Settings panel. Admin-only. No configuration options at this time.</div>';
+    var APP_VERSION = '1.0';
+
+    function getDefaultSession() {
+        try { return localStorage.getItem('attendance_default_session') || 'morning'; } catch (e) { return 'morning'; }
     }
+    function setDefaultSession(val) {
+        try { localStorage.setItem('attendance_default_session', val); } catch (e) {}
+    }
+
+    function renderSettings() {
+        var defaultSession = getDefaultSession();
+        document.getElementById('pageSettings').innerHTML =
+            '<div class="page-header"><h2>Settings</h2><p>Preferences and system info</p></div>' +
+            '<div class="settings-card">' +
+            '<h3 class="settings-heading">About</h3>' +
+            '<p class="settings-about"><strong>AI Attendance</strong> — Admin Dashboard</p>' +
+            '<p class="settings-muted">Version ' + APP_VERSION + '. Manage sections, students, and mark attendance with AI-powered chat assistance.</p>' +
+            '</div>' +
+            '<div class="settings-card">' +
+            '<h3 class="settings-heading">Preferences</h3>' +
+            '<div class="form-group"><label for="settingsDefaultSession">Default session (Mark Attendance)</label><select id="settingsDefaultSession"><option value="morning"' + (defaultSession === 'morning' ? ' selected' : '') + '>Morning</option><option value="afternoon"' + (defaultSession === 'afternoon' ? ' selected' : '') + '>Afternoon</option></select><p class="settings-muted">Pre-fill the session when you open Mark Attendance.</p></div>' +
+            '</div>';
+        document.getElementById('settingsDefaultSession').onchange = function () {
+            setDefaultSession(this.value);
+            toast('Default session saved.');
+        };
+    }
+
+    function openLogoutModal() {
+        openModal('modalLogout', '#btnLogoutCancel');
+    }
+    document.getElementById('btnLogoutCancel').onclick = function () { closeModal('modalLogout'); };
+    document.getElementById('btnLogoutConfirm').onclick = function () { closeModal('modalLogout'); window.location.reload(); };
+    document.getElementById('modalLogout').onclick = function (e) { if (e.target === this) closeModal('modalLogout'); };
 
     // ----- Nav -----
     navItems.forEach(function (n) {
         n.addEventListener('click', function () {
             var page = this.getAttribute('data-page');
-            if (page === 'logout') window.location.reload();
-            else showPage(page);
+            showPage(page);
         });
     });
+
+    // ----- Sidebar mobile toggle -----
+    (function () {
+        var sidebar = document.getElementById('sidebar');
+        var toggle = document.getElementById('sidebarToggle');
+        var backdrop = document.getElementById('sidebarBackdrop');
+        function openSidebar() {
+            sidebar.classList.remove('closed');
+            if (backdrop) { backdrop.classList.add('visible'); backdrop.setAttribute('aria-hidden', 'false'); }
+            if (toggle) toggle.setAttribute('aria-expanded', 'true');
+        }
+        function closeSidebar() {
+            sidebar.classList.add('closed');
+            if (backdrop) { backdrop.classList.remove('visible'); backdrop.setAttribute('aria-hidden', 'true'); }
+            if (toggle) toggle.setAttribute('aria-expanded', 'false');
+        }
+        if (toggle) {
+            toggle.addEventListener('click', function () {
+                if (sidebar.classList.contains('closed')) openSidebar(); else closeSidebar();
+            });
+        }
+        if (backdrop) backdrop.addEventListener('click', closeSidebar);
+        if (window.matchMedia('(max-width: 768px)').matches) sidebar.classList.add('closed');
+    })();
 
     // ----- Chat (Attendance Assistant) -----
     var chatPanel = document.getElementById('chatPanel');
@@ -478,7 +621,7 @@
         if (chatPanel) {
             chatPanel.classList.add('open');
             chatPanel.setAttribute('aria-hidden', 'false');
-            if (chatInput) chatInput.focus();
+            setTimeout(function () { if (chatInput) chatInput.focus(); }, 100);
         }
     }
     function chatHideWelcome() {
@@ -493,6 +636,8 @@
         if (chatPanel) {
             chatPanel.classList.remove('open');
             chatPanel.setAttribute('aria-hidden', 'true');
+            var btn = document.getElementById('chatFloatingBtn');
+            if (btn) setTimeout(function () { btn.focus(); }, 50);
         }
     }
     function chatScrollToBottom() {

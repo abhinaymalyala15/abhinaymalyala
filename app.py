@@ -18,7 +18,7 @@ except ImportError:
 
 from flask import Flask, redirect, url_for
 
-from config import SECRET_KEY, get_openai_api_key
+from config import ASSETS_VERSION, SECRET_KEY, get_openai_api_key
 from models import init_db
 from routes.main import bp as main_bp
 
@@ -34,6 +34,12 @@ app.config["SECRET_KEY"] = SECRET_KEY
 app.config["PERMANENT_SESSION_LIFETIME"] = 86400  # 1 day
 
 app.register_blueprint(main_bp)
+
+
+@app.context_processor
+def inject_assets_version():
+    return {"ASSETS_VERSION": ASSETS_VERSION}
+
 
 # Initialize DB when app is loaded (needed for gunicorn / Render)
 init_db()

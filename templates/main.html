@@ -3,48 +3,53 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Attendance System — Admin</title>
+    <meta name="description" content="Admin dashboard for AI-powered attendance: manage sections, students, mark attendance, and view records.">
+    <meta name="theme-color" content="#0d9488">
+    <title>AI Attendance — Admin Dashboard</title>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=7">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v=7">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v={{ ASSETS_VERSION }}">
 </head>
 <body class="admin-body">
-    <aside class="sidebar" aria-label="Main navigation">
+    <button type="button" class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle menu" aria-expanded="false"></button>
+    <div class="sidebar-backdrop" id="sidebarBackdrop" aria-hidden="true"></div>
+    <aside class="sidebar" id="sidebar" aria-label="Main navigation">
         <div class="sidebar-brand">
             <div class="sidebar-logo-wrap">
-                <span class="sidebar-logo-icon" aria-hidden="true">◈</span>
-                <h1 class="sidebar-logo">Attendance</h1>
+                <span class="sidebar-logo-icon" aria-hidden="true">
+                    <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="32" height="32" rx="8" fill="currentColor"/><path d="M9 11h14v2H9V11zm0 4h14v2H9v-2zm0 4h10v2H9v-2z" fill="white" opacity=".9"/><path d="M22 21l3-3 1.5 1.5L22 24l-3.5-3.5L20 19l2 2z" fill="#5eead4"/></svg>
+                </span>
+                <h1 class="sidebar-logo">AI Attendance</h1>
             </div>
             <span class="sidebar-tagline">Admin Dashboard</span>
         </div>
         <nav class="sidebar-nav">
             <button type="button" class="nav-item active" data-page="dashboard" aria-current="page">
-                <span class="nav-icon" aria-hidden="true">▢</span> Dashboard
+                <span class="nav-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span> Dashboard
             </button>
             <button type="button" class="nav-item" data-page="sections">
-                <span class="nav-icon" aria-hidden="true">▣</span> Sections
+                <span class="nav-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="8" height="8"/><rect x="14" y="3" width="8" height="8"/><rect x="2" y="13" width="8" height="8"/><rect x="14" y="13" width="8" height="8"/></svg></span> Sections
             </button>
             <button type="button" class="nav-item" data-page="students">
-                <span class="nav-icon" aria-hidden="true">☺</span> Students
+                <span class="nav-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span> Students
             </button>
             <button type="button" class="nav-item" data-page="mark">
-                <span class="nav-icon" aria-hidden="true">✓</span> Mark Attendance
+                <span class="nav-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span> Mark Attendance
             </button>
             <button type="button" class="nav-item" data-page="records">
-                <span class="nav-icon" aria-hidden="true">≡</span> Records
+                <span class="nav-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span> Records
             </button>
             <button type="button" class="nav-item" data-page="settings">
-                <span class="nav-icon" aria-hidden="true">⚙</span> Settings
+                <span class="nav-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span> Settings
             </button>
-            <button type="button" class="nav-item nav-item-logout" data-page="logout">
-                <span class="nav-icon" aria-hidden="true">→</span> Logout
+            <button type="button" class="nav-item nav-item-logout" data-page="logout" title="Sign out and reload the page">
+                <span class="nav-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span> Logout
             </button>
         </nav>
     </aside>
     <main class="main-content" id="mainContent">
-        <!-- Pages injected by JS -->
         <div id="pageDashboard" class="page active"></div>
         <div id="pageSections" class="page"></div>
         <div id="pageStudents" class="page"></div>
@@ -53,10 +58,8 @@
         <div id="pageSettings" class="page"></div>
     </main>
 
-    <!-- Toast container -->
     <div id="toastContainer" class="toast-container" aria-live="polite"></div>
 
-    <!-- Chat: floating button + slide-in panel -->
     <button type="button" id="chatFloatingBtn" class="chat-floating-btn" aria-label="Open Attendance Assistant" title="Attendance Assistant">
         <svg class="chat-btn-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
     </button>
@@ -82,21 +85,22 @@
             <div id="chatMessages" class="chat-messages" role="log" aria-live="polite"></div>
         </div>
         <footer class="chat-footer">
-            <input type="text" id="chatInput" class="chat-input" placeholder="Ask about attendance…" maxlength="1000" autocomplete="off">
+            <input type="text" id="chatInput" class="chat-input" placeholder="Ask about attendance…" maxlength="1000" autocomplete="off" aria-label="Chat message">
             <button type="button" id="chatSendBtn" class="chat-send-btn" aria-label="Send">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
             </button>
         </footer>
     </div>
 
-    <!-- Modals -->
-    <div id="modalSection" class="modal-overlay" aria-hidden="true" role="dialog">
+    <div id="modalSection" class="modal-overlay" aria-hidden="true" aria-modal="true" role="dialog" aria-labelledby="modalSectionTitle" aria-describedby="modalSectionDesc">
         <div class="modal-panel">
             <h2 id="modalSectionTitle" class="modal-title">Add Section</h2>
+            <p id="modalSectionDesc" class="sr-only">Enter a section name such as a class or group.</p>
             <form id="formSection">
                 <div class="form-group">
                     <label for="sectionName">Section name</label>
-                    <input type="text" id="sectionName" required placeholder="e.g. ECE A" autocomplete="off">
+                    <input type="text" id="sectionName" required placeholder="e.g. ECE A" autocomplete="off" aria-describedby="sectionNameError">
+                    <span id="sectionNameError" class="form-error" role="alert" aria-live="polite"></span>
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary btn-cancel-section">Cancel</button>
@@ -106,14 +110,15 @@
         </div>
     </div>
 
-    <div id="modalStudent" class="modal-overlay" aria-hidden="true" role="dialog">
+    <div id="modalStudent" class="modal-overlay" aria-hidden="true" aria-modal="true" role="dialog" aria-labelledby="modalStudentTitle" aria-describedby="modalStudentDesc">
         <div class="modal-panel">
             <h2 id="modalStudentTitle" class="modal-title">Add Student</h2>
+            <p id="modalStudentDesc" class="sr-only">Add a student to a section with roll number and name.</p>
             <form id="formStudent">
                 <input type="hidden" id="studentId" value="">
                 <div class="form-group">
                     <label for="studentSection">Section</label>
-                    <select id="studentSection" required></select>
+                    <select id="studentSection" required aria-describedby="studentFormError"></select>
                 </div>
                 <div class="form-group">
                     <label for="studentRollNo">Roll number</label>
@@ -123,6 +128,7 @@
                     <label for="studentName">Name</label>
                     <input type="text" id="studentName" required placeholder="Full name" autocomplete="name">
                 </div>
+                <span id="studentFormError" class="form-error" role="alert" aria-live="polite"></span>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary btn-cancel-student">Cancel</button>
                     <button type="submit" class="btn btn-primary">Save</button>
@@ -131,7 +137,7 @@
         </div>
     </div>
 
-    <div id="modalConfirm" class="modal-overlay" aria-hidden="true" role="dialog">
+    <div id="modalConfirm" class="modal-overlay" aria-hidden="true" aria-modal="true" role="dialog" aria-labelledby="modalConfirmTitle" aria-describedby="modalConfirmBody">
         <div class="modal-panel modal-panel-sm">
             <h2 class="modal-title" id="modalConfirmTitle">Confirm</h2>
             <p id="modalConfirmBody" class="modal-body"></p>
@@ -142,6 +148,17 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='js/main.js') }}?v=7"></script>
+    <div id="modalLogout" class="modal-overlay" aria-hidden="true" aria-modal="true" role="dialog" aria-labelledby="modalLogoutTitle">
+        <div class="modal-panel modal-panel-sm">
+            <h2 class="modal-title" id="modalLogoutTitle">Sign out?</h2>
+            <p class="modal-body">This will reload the page. Continue?</p>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" id="btnLogoutCancel">Cancel</button>
+                <button type="button" class="btn btn-primary" id="btnLogoutConfirm">Sign out</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}?v={{ ASSETS_VERSION }}"></script>
 </body>
 </html>

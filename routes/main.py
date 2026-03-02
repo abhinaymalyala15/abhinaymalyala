@@ -50,12 +50,29 @@ def index():
 
 
 # ---------------------------------------------------------------------------
-# Dashboard
+# Dashboard (cached 60s for performance)
 # ---------------------------------------------------------------------------
+
+_dashboard_cache = None
+_dashboard_cache_time = 0
+DASHBOARD_CACHE_SECONDS = 60
+
+
+def _invalidate_dashboard_cache():
+    global _dashboard_cache
+    _dashboard_cache = None
+
 
 @bp.route("/api/dashboard/stats", methods=["GET"])
 def api_dashboard_stats():
-    return jsonify(dashboard_stats())
+    global _dashboard_cache, _dashboard_cache_time
+    now = time.time()
+    if _dashboard_cache is not None and (now - _dashboard_cache_time) < DASHBOARD_CACHE_SECONDS:
+        return jsonify(_dashboard_cache)
+    data = dashboard_stats()
+    _dashboard_cache = data
+    _dashboard_cache_time = now
+    return jsonify(data)
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +95,7 @@ def api_sections_create():
         return jsonify({"error": "Section name is required"}), 400
     try:
         sid = section_create(name)
+        _invalidate_dashboard_cache()
         return jsonify({"id": sid, "ok": True})
     except Exception as e:
         if "UNIQUE" in str(e) or "Duplicate" in str(e):
@@ -95,6 +113,7 @@ def api_sections_update(sid):
         return jsonify({"error": "Section name is required"}), 400
     try:
         section_update(sid, name)
+        _invalidate_dashboard_cache()
         return jsonify({"ok": True})
     except Exception as e:
         if "UNIQUE" in str(e) or "Duplicate" in str(e):
@@ -107,6 +126,7 @@ def api_sections_delete(sid):
     if section_by_id(sid) is None:
         return jsonify({"error": "Section not found"}), 404
     section_delete(sid)
+    _invalidate_dashboard_cache()
     return jsonify({"ok": True})
 
 
@@ -142,6 +162,7 @@ def api_students_create():
         return jsonify({"error": "Valid section is required"}), 400
     try:
         sid = student_create(roll_no=roll_no, name=name, section_id=section_id)
+        _invalidate_dashboard_cache()
         return jsonify({"id": sid, "ok": True})
     except Exception as e:
         if "UNIQUE" in str(e) or "Duplicate" in str(e):
@@ -175,6 +196,7 @@ def api_students_update(sid):
         return jsonify({"error": "Valid section is required"}), 400
     try:
         student_update(sid, roll_no=roll_no, name=name, section_id=section_id)
+        _invalidate_dashboard_cache()
         return jsonify({"ok": True})
     except Exception as e:
         if "UNIQUE" in str(e) or "Duplicate" in str(e):
@@ -187,6 +209,7 @@ def api_students_delete(sid):
     if student_by_id(sid) is None:
         return jsonify({"error": "Student not found"}), 404
     student_delete(sid)
+    _invalidate_dashboard_cache()
     return jsonify({"ok": True})
 
 
@@ -234,6 +257,7 @@ def api_attendance_mark():
     if section_by_id(section_id) is None:
         return jsonify({"error": "Section not found"}), 404
     attendance_set_absent_for_date_section_session(date_str, section_id, session, absent_ids)
+    _invalidate_dashboard_cache()
     return jsonify({"ok": True})
 
 

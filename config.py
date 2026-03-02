@@ -39,6 +39,9 @@ def _read_openai_key_from_file():
 # Flask
 SECRET_KEY = os.environ.get("SECRET_KEY", "change-me-in-production-use-long-random-string")
 
+# Static assets cache busting (bump or set ASSETS_VERSION in env to invalidate cache)
+ASSETS_VERSION = os.environ.get("ASSETS_VERSION", "1")
+
 # Database: set USE_SQLITE=0 to use MySQL; default 1 so app runs without MySQL
 USE_SQLITE = os.environ.get("USE_SQLITE", "1").strip().lower() in ("1", "true", "yes")
 SQLITE_PATH = os.environ.get("SQLITE_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "ai_system.db"))
