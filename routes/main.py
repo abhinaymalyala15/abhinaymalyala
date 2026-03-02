@@ -4,8 +4,12 @@ Includes hybrid AI chat (Attendance Assistant) with intent engine, smart default
 """
 import logging
 import re
+import smtplib
 import time
 from datetime import datetime, timedelta
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
 from flask import Blueprint, request, jsonify, render_template
 from models import (
     section_create,
@@ -287,6 +291,128 @@ def api_attendance_view():
     date_str = (request.args.get("date") or datetime.now().strftime("%Y-%m-%d")).strip()
     result = attendance_view_by_date(date_str)
     return jsonify({"date": date_str, "by_section_session": result})
+
+
+# ---------------------------------------------------------------------------
+# Email report (absentees)
+# ---------------------------------------------------------------------------
+
+def _send_email(to_email, subject, body_text):
+    """Send a plain-text email. Returns (True, None) on success, (False, error_message) on failure."""
+    from config import is_email_configured, MAIL_SERVER, MAIL_PORT, MAIL_USE_TLS, MAIL_USERNAME, MAIL_PASSWORD, MAIL_FROM
+    if not is_email_configured():
+        return False, "Email is not configured. Set MAIL_SERVER, MAIL_USERNAME, MAIL_PASSWORD (and optionally MAIL_FROM) in environment."
+    to_email = (to_email or "").strip()
+    if not to_email or "@" not in to_email:
+        return False, "Invalid recipient email."
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = MAIL_FROM or MAIL_USERNAME
+        msg["To"] = to_email
+        msg.attach(MIMEText(body_text, "plain", "utf-8"))
+        with smtplib.SMTP(MAIL_SERVER, MAIL_PORT) as server:
+            if MAIL_USE_TLS:
+                server.starttls()
+            server.login(MAIL_USERNAME, MAIL_PASSWORD)
+            server.sendmail(msg["From"], to_email, msg.as_string())
+        return True, None
+    except Exception as e:
+        logger.exception("send_email failed")
+        return False, str(e)
+
+
+def _build_absentees_report_for_date(date_str, section, session):
+    """Get absentees for one date/section/session. section: name or 'ALL'. session: 'morning' or 'afternoon' or 'all'.
+    Returns list of dicts with section_name, session, roll_no, name (or roll_no, name for single section)."""
+    section = (section or "ALL").strip()
+    session = (session or "all").strip().lower()
+    if section.upper() == "ALL" and session == "all":
+        rows = attendance_absent_today_all_sections(date_str)
+        return rows
+    if section.upper() == "ALL" and session in ("morning", "afternoon"):
+        sections = sections_list()
+        out = []
+        for sec in sections:
+            for a in attendance_absent_on_date_section_by_name(date_str, sec["name"], session):
+                out.append({"section_name": sec["name"], "session": session, "roll_no": a["roll_no"], "name": a["name"]})
+        return out
+    sec = section_by_name_insensitive(section) if section.upper() != "ALL" else None
+    if not sec:
+        return []
+    if session == "all":
+        out = []
+        for sess in VALID_SESSIONS:
+            for a in attendance_absent_on_date_section_by_name(date_str, sec["name"], sess):
+                out.append({"section_name": sec["name"], "session": sess, "roll_no": a["roll_no"], "name": a["name"]})
+        return out
+    rows = attendance_absent_on_date_section_by_name(date_str, sec["name"], session)
+    return [{"section_name": sec["name"], "session": session, "roll_no": r["roll_no"], "name": r["name"]} for r in rows]
+
+
+def _handle_send_absentees_email(params, report_email):
+    """Build absentees report and send to report_email. Returns response text for the user."""
+    section = (params.get("section") or "").strip() or None
+    session_val = (params.get("session") or "").strip().lower() or None
+    if session_val in ("", "null"):
+        session_val = None
+    if section and section.upper() == "ALL":
+        section = "ALL"
+    last_n_days = params.get("last_n_days")
+    if last_n_days is not None:
+        try:
+            last_n_days = int(last_n_days)
+            last_n_days = min(14, max(1, last_n_days))
+        except (TypeError, ValueError):
+            last_n_days = 1
+    else:
+        last_n_days = 1
+
+    if not report_email or not (report_email or "").strip():
+        return "Please set your **report recipient email** in **Settings** (Report recipient email), then try again."
+
+    report_email = report_email.strip()
+    if "@" not in report_email:
+        return "Please set a valid email address in Settings."
+
+    if section is None or section == "" or (isinstance(section, str) and section.strip().lower() in ("null", "")):
+        return "Which **section** do you want the absentees report for? (e.g. *ECE A*, or *all sections*). Reply with the section name."
+    if session_val is None or session_val == "" or session_val not in ("morning", "afternoon", "all"):
+        return "Which **session** do you want? (*morning* or *afternoon*). Reply with morning or afternoon."
+
+    today = datetime.now()
+    dates_to_use = []
+    if last_n_days and last_n_days > 1:
+        for i in range(last_n_days):
+            d = today - timedelta(days=i)
+            dates_to_use.append(d.strftime("%Y-%m-%d"))
+    else:
+        dates_to_use = [today.strftime("%Y-%m-%d")]
+
+    from config import is_email_configured
+    if not is_email_configured():
+        return "Email sending is not configured on the server. Your admin needs to set MAIL_SERVER, MAIL_USERNAME, and MAIL_PASSWORD in the environment to send reports."
+
+    lines = ["Absentees Report – AI Attendance", "=" * 40, ""]
+    for date_str in dates_to_use:
+        rows = _build_absentees_report_for_date(date_str, section, session_val)
+        lines.append(f"Date: {date_str}  |  Section: {section}  |  Session: {session_val}")
+        lines.append("-" * 40)
+        if not rows:
+            lines.append("(No absentees recorded)")
+        else:
+            for r in rows:
+                sn = r.get("section_name", "")
+                sess = r.get("session", "")
+                lines.append(f"  {r.get('roll_no', '')}  {r.get('name', '')}  {sn}  {sess}")
+        lines.append("")
+
+    body = "\n".join(lines)
+    subject = f"Absentees report – {section} – {dates_to_use[0]}" + (f" (last {len(dates_to_use)} days)" if len(dates_to_use) > 1 else "")
+    ok, err = _send_email(report_email, subject, body)
+    if ok:
+        return f"Report sent to **{report_email}** for {section}, {session_val}" + (f" (last {len(dates_to_use)} days)." if len(dates_to_use) > 1 else ".")
+    return f"Could not send email: {err}"
 
 
 # ---------------------------------------------------------------------------
@@ -616,8 +742,13 @@ def api_chat():
         if isinstance(d, str) and len(d) >= 4 and d[:4] < "2024" and not date_mentioned:
             intent_data["date"] = None
     params = _apply_smart_defaults(intent_data)
+    report_email = (data.get("report_email") or "").strip() or None
 
     try:
+        if intent == "send_absentees_email":
+            text = _handle_send_absentees_email(intent_data, report_email)
+            return jsonify({"response": text})
+
         if intent == "attendance_list":
             result = _handle_attendance_list(params)
             text = format_result_with_ai(result)

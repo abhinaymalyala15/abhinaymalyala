@@ -69,6 +69,18 @@ OPENAI_TEMPERATURE = float(os.environ.get("OPENAI_TEMPERATURE", "0.2"))
 CHAT_RATE_LIMIT_PER_MINUTE = int(os.environ.get("CHAT_RATE_LIMIT_PER_MINUTE", "10"))
 CHAT_DAILY_CAP = int(os.environ.get("CHAT_DAILY_CAP", "200"))
 
+# Email (for sending absentee reports). Set in .env or Environment for reports to work.
+MAIL_SERVER = os.environ.get("MAIL_SERVER", "")
+MAIL_PORT = int(os.environ.get("MAIL_PORT", "587"))
+MAIL_USE_TLS = os.environ.get("MAIL_USE_TLS", "1").strip().lower() in ("1", "true", "yes")
+MAIL_USERNAME = (os.environ.get("MAIL_USERNAME") or "").strip()
+MAIL_PASSWORD = (os.environ.get("MAIL_PASSWORD") or "").strip()
+MAIL_FROM = (os.environ.get("MAIL_FROM") or MAIL_USERNAME or "").strip()
+
+
+def is_email_configured():
+    return bool(MAIL_SERVER and MAIL_USERNAME and MAIL_PASSWORD)
+
 # MySQL (when USE_SQLITE is False)
 MYSQL_HOST = os.environ.get("MYSQL_HOST", "localhost")
 MYSQL_PORT = int(os.environ.get("MYSQL_PORT", "3306"))

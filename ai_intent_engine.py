@@ -20,6 +20,7 @@ ALLOWED_INTENTS = frozenset({
     "absent_more_than",
     "section_most_absent",
     "attendance_week",
+    "send_absentees_email",
     "general_question",
 })
 
@@ -38,10 +39,11 @@ Supported intents:
 - absent_more_than: students absent more than X days
 - section_most_absent: which section has most absentees today
 - attendance_week: total attendance for this week (last 7 days)
+- send_absentees_email: user wants to receive absentees report by email (e.g. "send absentees to my email", "email me the absentees", "send last 3 days absentees to my email"). Extract section, session, and last_n_days if mentioned (e.g. "last 3 days" -> last_n_days: 3).
 - general_question: only if clearly not about attendance/students/school
 
 Return format (JSON only):
-{"intent": "intent_name", "date": "YYYY-MM-DD or null", "section": "Section name or ALL or null", "session": "morning or afternoon or ALL or null", "status": "present or absent or null", "roll_no": "value or null", "student_name": "value or null", "days": number or null}
+{"intent": "intent_name", "date": "YYYY-MM-DD or null", "section": "Section name or ALL or null", "session": "morning or afternoon or ALL or null", "status": "present or absent or null", "roll_no": "value or null", "student_name": "value or null", "days": number or null, "last_n_days": number or null}
 
 Date rules: Use YYYY-MM-DD. For "today" use actual today. For "yesterday" use yesterday's date. For "23 Feb" use 2026-02-23 (current year). For "01-02-2026" or "1-2-2026" use that date. For "last Monday" use the most recent Monday. Section: extract names like "ECE A", "ECE", "AIML", "CSE" when user says "in ECE A", "for ECE", etc. Session: "morning attendance" -> morning, "afternoon attendance" -> afternoon. Return JSON only, no explanation."""
 
@@ -161,6 +163,11 @@ def _parse_intent_json(text):
                 data["days"] = int(data["days"])
             except (TypeError, ValueError):
                 data["days"] = None
+        if "last_n_days" in data and data["last_n_days"] is not None:
+            try:
+                data["last_n_days"] = int(data["last_n_days"])
+            except (TypeError, ValueError):
+                data["last_n_days"] = None
         for key in ("date", "section", "session", "status", "roll_no", "student_name"):
             if key in data and data[key] is not None and not isinstance(data[key], str):
                 data[key] = str(data[key]) if data[key] else None
@@ -252,6 +259,16 @@ def _rule_based_intent(q_raw):
     if "total students" in q or "number of students" in q:
         out["intent"] = "count_students"
         out["section"] = section or "ALL"
+        return out
+
+    # send_absentees_email first (before absent_more_than) so "last 3 days absentees to my email" is not treated as absent_more_than
+    if ("send" in q or "email" in q or "mail" in q) and ("absent" in q or "absentees" in q) and ("email" in q or "mail" in q or "to my" in q or "me " in q):
+        out["intent"] = "send_absentees_email"
+        out["section"] = section or None
+        out["session"] = "morning" if "morning" in q and "afternoon" not in q else "afternoon" if "afternoon" in q else None
+        last_n = re.search(r"last\s*(\d+)\s*day", q)
+        out["last_n_days"] = int(last_n.group(1)) if last_n else None
+        out["date"] = parsed_date
         return out
 
     if "absent" in q and ("day" in q or "days" in q or "more than" in q):

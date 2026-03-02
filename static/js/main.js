@@ -553,8 +553,16 @@
         try { localStorage.setItem('attendance_default_session', val); } catch (e) {}
     }
 
+    function getReportEmail() {
+        try { return (localStorage.getItem('attendance_report_email') || '').trim(); } catch (e) { return ''; }
+    }
+    function setReportEmail(val) {
+        try { localStorage.setItem('attendance_report_email', (val || '').trim()); } catch (e) {}
+    }
+
     function renderSettings() {
         var defaultSession = getDefaultSession();
+        var reportEmail = getReportEmail();
         document.getElementById('pageSettings').innerHTML =
             '<div class="page-header"><h2>Settings</h2><p>Preferences and system info</p></div>' +
             '<div class="settings-card">' +
@@ -565,10 +573,18 @@
             '<div class="settings-card">' +
             '<h3 class="settings-heading">Preferences</h3>' +
             '<div class="form-group"><label for="settingsDefaultSession">Default session (Mark Attendance)</label><select id="settingsDefaultSession"><option value="morning"' + (defaultSession === 'morning' ? ' selected' : '') + '>Morning</option><option value="afternoon"' + (defaultSession === 'afternoon' ? ' selected' : '') + '>Afternoon</option></select><p class="settings-muted">Pre-fill the session when you open Mark Attendance.</p></div>' +
+            '<div class="form-group"><label for="settingsReportEmail">Report recipient email</label><input type="email" id="settingsReportEmail" placeholder="e.g. admin@school.edu" value="' + escapeHtml(reportEmail) + '"><p class="settings-muted">When you ask the AI to &quot;send absentees to my email&quot; or &quot;email last 3 days absentees&quot;, the report will be sent to this address. The AI will ask for section and session (morning/afternoon) if not specified.</p></div>' +
             '</div>';
         document.getElementById('settingsDefaultSession').onchange = function () {
             setDefaultSession(this.value);
             toast('Default session saved.');
+        };
+        document.getElementById('settingsReportEmail').onchange = function () {
+            setReportEmail(this.value);
+            toast('Report email saved.');
+        };
+        document.getElementById('settingsReportEmail').onblur = function () {
+            setReportEmail(this.value);
         };
     }
 
@@ -714,7 +730,8 @@
         chatInput.value = '';
         chatAppendMessage('user', q);
         chatShowLoading(true);
-        api('/api/chat', { method: 'POST', body: { question: q } })
+        var reportEmail = getReportEmail();
+        api('/api/chat', { method: 'POST', body: { question: q, report_email: reportEmail || undefined } })
             .then(function (data) {
                 chatShowLoading(false);
                 chatAppendMessage('ai', data.response || 'No response.');
