@@ -9,6 +9,32 @@ from datetime import datetime
 
 
 # ---------------------------------------------------------------------------
+# Assistant persona: professional college attendance assistant
+# ---------------------------------------------------------------------------
+
+ASSISTANT_PERSONA = """You are a professional AI assistant for a college attendance management system.
+Your job is to help teachers and administrators understand attendance data.
+
+Rules:
+- Be clear, concise, and professional.
+- Use structured responses.
+- When listing students, use bullet points.
+- Always summarize totals when possible.
+- Do not invent data.
+- Only respond based on provided system data.
+- If the user question is unclear, ask a clarification question.
+
+Tone: Professional, polite, and helpful."""
+
+ASSISTANT_FORMATTING_RULES = (
+    "Use exactly the information provided — do not add or invent data. "
+    "Use bullet points or numbered lists for student lists. "
+    "Include a brief total/summary when possible. "
+    "Be clear, concise, and professional. No greetings or filler."
+)
+
+
+# ---------------------------------------------------------------------------
 # Classification (rule-based, no API call)
 # ---------------------------------------------------------------------------
 
@@ -161,7 +187,7 @@ def format_attendance_response(summary):
         messages=[
             {
                 "role": "system",
-                "content": "You are an attendance assistant. Rewrite the given attendance summary into a clear, professional, concise reply. Do not add information not in the summary. Use short paragraphs or bullet points if helpful. No SQL, no code."
+                "content": ASSISTANT_PERSONA + " Rewrite the given attendance summary into a clear, structured reply. " + ASSISTANT_FORMATTING_RULES + " No SQL, no code."
             },
             {"role": "user", "content": (summary or "No attendance data.")[:3000]}
         ],
@@ -177,6 +203,11 @@ def general_openai_response(question):
     from config import get_openai_api_key, OPENAI_MODEL, OPENAI_MAX_TOKENS, OPENAI_TEMPERATURE
     api_key = get_openai_api_key()
     if not api_key:
+        # For greetings, return a short friendly reply so the assistant feels "configured"
+        q = (question or "").strip().lower()
+        _greetings = frozenset(("hi", "hello", "hey", "hlo", "hloo", "hlw", "hii", "helloo", "hellooo", "yo", "sup", "gm", "gn", "good morning", "good afternoon", "good evening"))
+        if q in _greetings or (len(q.split()) == 1 and q.rstrip("!") in _greetings):
+            return "Hello. I'm the attendance assistant for your college system. You can ask about sections, students, or today's attendance. To enable full AI replies, set OPENAI_API_KEY in your .env and restart the server."
         return (
             "**AI assistant is currently offline.**\n\n"
             "To enable AI responses:\n"
@@ -186,21 +217,37 @@ def general_openai_response(question):
             "You can still ask attendance-related questions; I’ll answer from the database."
         )
 
-    from openai import OpenAI
-    client = OpenAI(api_key=api_key)
-    response = client.chat.completions.create(
-        model=OPENAI_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a helpful assistant. Answer the user's question in a brief, friendly way. For general questions (e.g. 'what is AI?', 'how are you?') answer normally. For attendance, students, or sections you can mention you help with that too. Be concise. No SQL or code."
-            },
-            {"role": "user", "content": (question or "")[:2000]}
-        ],
-        max_tokens=OPENAI_MAX_TOKENS,
-        temperature=0.2,
-    )
-    return (response.choices[0].message.content or "").strip()
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": ASSISTANT_PERSONA + " Answer the user's question in a brief, professional way. For general questions (e.g. 'what is AI?') answer normally. For attendance, students, or sections mention you help with that. If the question is unclear or outside attendance scope, ask a short clarification. No SQL or code."
+                },
+                {"role": "user", "content": (question or "")[:2000]}
+            ],
+            max_tokens=OPENAI_MAX_TOKENS,
+            temperature=0.2,
+        )
+        return (response.choices[0].message.content or "").strip()
+    except Exception as e:
+        err = str(e).strip()
+        if "401" in err or "invalid_api_key" in err or "Incorrect API key" in err:
+            return (
+                "**AI is not available** — the API key in your `.env` is invalid or expired.\n\n"
+                "To fix:\n"
+                "1. Go to https://platform.openai.com/account/api-keys\n"
+                "2. Create or copy a valid API key.\n"
+                "3. In your project root, set in `.env`: `OPENAI_API_KEY=sk-...`\n"
+                "4. Restart the Flask server.\n\n"
+                "You can still use **attendance questions** (e.g. who was absent, send absentees to email); those use the database and optional AI."
+            )
+        if "429" in err or "rate" in err.lower():
+            return "**AI is busy.** Please try again in a moment."
+        return "**Sorry, I couldn't process that.** Please try again or rephrase your question."
 
 
 def _structured_result_to_text(structured_result):
@@ -245,8 +292,8 @@ def _structured_result_to_text(structured_result):
             lines.append("| --- | --- | --- |")
             for row in structured_result["by_day"][:10]:
                 lines.append("| %s | %s | %s |" % (row.get("date", ""), row.get("present", 0), row.get("absent", 0)))
-        # List: students / list
-        for list_key in ("students", "list", "by_section_session"):
+        # List: students / list / insights
+        for list_key in ("students", "list", "by_section_session", "sections_highest_absence", "students_absent_more_than_3_times"):
             if list_key not in structured_result or not structured_result[list_key]:
                 continue
             items = structured_result[list_key]
@@ -256,44 +303,26 @@ def _structured_result_to_text(structured_result):
                 for row in items[:15]:
                     lines.append("  • %s — %s: Present %s, Absent %s" % (row.get("section", ""), row.get("session", ""), row.get("present", 0), row.get("absent", 0)))
             elif isinstance(items, list) and items and isinstance(items[0], dict):
-                # Format as table when we have roll_no, name, and optionally section/session or status_today
-                show_as_table = "roll_no" in items[0] and "name" in items[0]
-                has_status_today = any("status_today" in s for s in items[:3])
-                if show_as_table and has_status_today:
-                    lines.append("\n**%s (table):**" % label)
-                    lines.append("| Roll No | Name | Section | Status (today) |")
-                    lines.append("| --- | --- | --- | --- |")
-                    for s in items[:50]:
-                        lines.append("| %s | %s | %s | %s |" % (s.get("roll_no", ""), s.get("name", ""), s.get("section_name", ""), s.get("status_today", "")))
-                elif show_as_table and any("section_name" in s or "session" in s for s in items[:3]):
-                    # Absent list table: Name | Roll No | Session absent (morning/afternoon)
-                    lines.append("\n**%s**" % label)
-                    lines.append("| Name | Roll No | Session absent (morning/afternoon) |")
-                    lines.append("| --- | --- | --- |")
-                    for s in items[:50]:
-                        nm = s.get("name", "")
-                        rn = s.get("roll_no", "")
-                        sess = s.get("session", "") or "—"
-                        lines.append("| %s | %s | %s |" % (nm, rn, sess))
-                else:
-                    lines.append("\n**%s:**" % label)
-                    for i, s in enumerate(items[:25], 1):
-                        if "name" in s and "roll_no" in s:
-                            line = "  %d. %s (%s)" % (i, s.get("name", ""), s.get("roll_no", ""))
-                            if s.get("section_name"):
-                                line += " — %s" % s["section_name"]
-                            if s.get("session"):
-                                line += " — %s" % s["session"]
-                            if "rate" in s and s["rate"] is not None:
-                                line += " — %.0f%% attendance" % (s["rate"] * 100)
-                            if "absent_days" in s:
-                                line += " — %s days absent" % s["absent_days"]
-                            lines.append(line)
-                        elif "name" in s and "section" in s:
-                            line = "  %d. %s (%s) — %s" % (i, s.get("name", ""), s.get("roll_no", ""), s.get("section", ""))
-                            lines.append(line)
-                        else:
-                            lines.append("  %d. %s" % (i, json.dumps(s)[:80]))
+                # Short bullet list: "1. Name (roll_no)" or with extra fields
+                lines.append("\n**%s:**" % label)
+                for i, s in enumerate(items[:25], 1):
+                    if "name" in s and "roll_no" in s:
+                        line = "  %d. %s (%s)" % (i, s.get("name", ""), s.get("roll_no", ""))
+                        if s.get("section_name"):
+                            line += " — %s" % s["section_name"]
+                        if s.get("session"):
+                            line += " — %s" % s["session"]
+                        if "rate" in s and s["rate"] is not None:
+                            line += " — %.0f%% attendance" % (s["rate"] * 100)
+                        if "absent_days" in s:
+                            line += " — %s days absent" % s["absent_days"]
+                        lines.append(line)
+                    elif "name" in s:
+                        lines.append("  %d. %s" % (i, s.get("name", "")))
+                    else:
+                        lines.append("  %d. %s" % (i, json.dumps(s)[:80]))
+                if structured_result.get("count") is not None:
+                    lines.append("\n**Total:** %s" % structured_result["count"])
             else:
                 lines.append("\n**%s:** %s" % (label, items))
         if structured_result.get("truncated"):
@@ -327,9 +356,9 @@ def format_result_with_ai(structured_result):
             messages=[
                 {
                     "role": "system",
-                    "content": "You ONLY reformat the given attendance/student data into a clear, structured reply. RULES: (1) Use exactly the information provided — do not add, remove, or change any fact. (2) Use bold labels (**Label:**), bullet points (-), and tables where appropriate. (3) No greetings, no 'Here is...', no extra commentary. (4) Keep dates as YYYY-MM-DD; do not replace with the word 'today'. (5) Keep the same facts and numbers. Output the structured text only."
+                    "content": ASSISTANT_PERSONA + " Format the attendance/student data below into a clear, structured reply. " + ASSISTANT_FORMATTING_RULES + " Use a brief title (e.g. 'Absentees Today (ECE A)'), bullet or numbered list for students, and end with a total. Keep dates as YYYY-MM-DD. No greetings."
                 },
-                {"role": "user", "content": "Format this data strictly (same facts, structured only):\n\n" + data_str}
+                {"role": "user", "content": "Format this data (same facts only, structured):\n\n" + data_str}
             ],
             max_tokens=400,
             temperature=0.1,

@@ -86,10 +86,18 @@
             <div id="chatMessages" class="chat-messages" role="log" aria-live="polite"></div>
         </div>
         <footer class="chat-footer">
-            <input type="text" id="chatInput" class="chat-input" placeholder="Ask about attendance…" maxlength="1000" autocomplete="off" aria-label="Chat message">
-            <button type="button" id="chatSendBtn" class="chat-send-btn" aria-label="Send">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
-            </button>
+            <div class="chat-suggestions-bar" id="chatSuggestionsBar">
+                <button type="button" class="chat-suggestion-btn" data-msg="Who was absent today">Who was absent today</button>
+                <button type="button" class="chat-suggestion-btn" data-msg="Show attendance summary">Show attendance summary</button>
+                <button type="button" class="chat-suggestion-btn" data-msg="Which students have low attendance">Which students have low attendance</button>
+                <button type="button" class="chat-suggestion-btn" data-msg="Which section had most absences">Which section had most absences</button>
+            </div>
+            <div class="chat-input-row">
+                <input type="text" id="chatInput" class="chat-input" placeholder="Ask about attendance…" maxlength="1000" autocomplete="off" aria-label="Chat message">
+                <button type="button" id="chatSendBtn" class="chat-send-btn" aria-label="Send">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+                </button>
+            </div>
         </footer>
     </div>
 

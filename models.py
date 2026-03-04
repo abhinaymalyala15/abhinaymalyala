@@ -106,6 +106,10 @@ def init_db():
                 CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance(date);
                 CREATE INDEX IF NOT EXISTS idx_attendance_student ON attendance(student_id);
                 CREATE INDEX IF NOT EXISTS idx_students_section ON students(section_id);
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                );
             """)
         return
 
@@ -147,6 +151,13 @@ def init_db():
                 cur.execute(sql)
             except Exception:
                 pass
+        try:
+            cur.execute("""CREATE TABLE IF NOT EXISTS app_settings (
+                key VARCHAR(100) PRIMARY KEY,
+                value TEXT
+            )""")
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -686,3 +697,115 @@ def attendance_records_paginated(section_id, date_str, session, page=1, per_page
         rows = [_row_to_dict(r) for r in rows]
     list_ = [dict(r) if isinstance(r, dict) else {"roll_no": r[0], "name": r[1], "status": r[2]} for r in (rows or [])]
     return list_, total
+
+
+# ---------------------------------------------------------------------------
+# App settings (key-value, e.g. mail config)
+# ---------------------------------------------------------------------------
+
+def get_setting(key):
+    """Return value for key or None."""
+    if not key or not isinstance(key, str):
+        return None
+    with get_connection() as conn:
+        cur = _cursor(conn)
+        _execute(cur, "SELECT value FROM app_settings WHERE key = %s LIMIT 1", (key.strip(),))
+        row = cur.fetchone()
+    if not row:
+        return None
+    r = _row_to_dict(row) if USE_SQLITE and row else row
+    return (r.get("value") if isinstance(r, dict) else r[0]) or None
+
+
+def set_setting(key, value):
+    """Set key=value. value can be str or None (deletes)."""
+    key = (key or "").strip()
+    if not key:
+        return
+    with get_connection() as conn:
+        cur = _cursor(conn)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            _execute(cur, "DELETE FROM app_settings WHERE key = %s", (key,))
+        elif USE_SQLITE:
+            cur.execute(
+                "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, str(value).strip())
+            )
+        else:
+            _execute(cur,
+                     "INSERT INTO app_settings (key, value) VALUES (%s, %s) ON DUPLICATE KEY UPDATE value = VALUES(value)",
+                     (key, str(value).strip()))
+    return
+
+
+MAIL_KEYS = ("mail_server", "mail_port", "mail_use_tls", "mail_username", "mail_password", "mail_from")
+
+
+def get_mail_settings_from_db():
+    """Return dict of mail_* keys from app_settings. Password included (for sending only)."""
+    out = {}
+    for k in MAIL_KEYS:
+        out[k] = get_setting(k)
+    return out
+
+
+def set_mail_settings_from_db(server=None, port=None, use_tls=None, username=None, password=None, from_addr=None):
+    """Save mail settings. Empty string or None for password keeps existing; pass a value to update."""
+    if server is not None:
+        set_setting("mail_server", (server or "").strip())
+    if port is not None:
+        set_setting("mail_port", str(port).strip() if port else "587")
+    if use_tls is not None:
+        set_setting("mail_use_tls", "1" if use_tls in (True, 1, "1", "true", "yes") else "0")
+    if username is not None:
+        set_setting("mail_username", (username or "").strip())
+    if password is not None and (isinstance(password, str) and password.strip()):
+        set_setting("mail_password", password.strip())
+    if from_addr is not None:
+        set_setting("mail_from", (from_addr or "").strip())
+
+
+# ---------------------------------------------------------------------------
+# Reports: daily summary, student report (for APIs)
+# ---------------------------------------------------------------------------
+
+def report_daily(date_str):
+    """Daily report: total_students, present, absent, attendance_percentage for the given date."""
+    view = attendance_view_by_date(date_str)
+    total_present = sum(r.get("present", 0) for r in view)
+    total_absent = sum(r.get("absent", 0) for r in view)
+    total_students = total_present + total_absent
+    pct = (total_present / total_students * 100) if total_students else 0
+    return {
+        "date": date_str,
+        "total_students": total_students,
+        "present": total_present,
+        "absent": total_absent,
+        "attendance_percentage": round(pct, 1),
+    }
+
+
+def report_student(student_id):
+    """Student report: total_classes (sessions), present, absent, percentage. Returns None if student not found."""
+    s = student_by_id(student_id)
+    if not s:
+        return None
+    with get_connection() as conn:
+        cur = _cursor(conn)
+        _execute(cur, "SELECT COUNT(*) AS n FROM attendance WHERE student_id = %s", (int(student_id),))
+        row = cur.fetchone()
+        total = (row.get("n") if isinstance(row, dict) else (row[0] if row else 0)) or 0
+        _execute(cur, "SELECT COUNT(*) AS n FROM attendance WHERE student_id = %s AND status = %s", (int(student_id), "present"))
+        row = cur.fetchone()
+        present = (row.get("n") if isinstance(row, dict) else (row[0] if row else 0)) or 0
+    absent = total - present
+    pct = (present / total * 100) if total else 0
+    return {
+        "student_id": student_id,
+        "student_name": s.get("name", ""),
+        "roll_no": s.get("roll_no", ""),
+        "total_classes": total,
+        "present": present,
+        "absent": absent,
+        "percentage": round(pct, 1),
+    }

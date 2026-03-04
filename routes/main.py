@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-from flask import Blueprint, request, jsonify, render_template
+from flask import Blueprint, request, jsonify, render_template, session
 from models import (
     section_create,
     section_update,
@@ -39,6 +39,8 @@ from models import (
     attendance_view_by_date,
     attendance_records_paginated,
     dashboard_stats,
+    report_daily,
+    report_student,
     VALID_SESSIONS,
 )
 
@@ -294,27 +296,121 @@ def api_attendance_view():
 
 
 # ---------------------------------------------------------------------------
+# Analytics: low attendance
+# ---------------------------------------------------------------------------
+
+@bp.route("/api/analytics/low-attendance", methods=["GET"])
+def api_analytics_low_attendance():
+    """Students with attendance percentage below 75%. Uses last 30 days."""
+    date_end = datetime.now()
+    date_start = date_end - timedelta(days=30)
+    date_end_str = date_end.strftime("%Y-%m-%d")
+    date_start_str = date_start.strftime("%Y-%m-%d")
+    rates = students_attendance_rates(date_start_str, date_end_str)
+    low = [r for r in rates if (r.get("rate") or 1) < 0.75]
+    data = [
+        {"student_name": r.get("name", ""), "roll_no": r.get("roll_no", ""), "percentage": int((r.get("rate") or 0) * 100)}
+        for r in low
+    ]
+    return jsonify({"success": True, "data": data})
+
+
+# ---------------------------------------------------------------------------
+# Reports: daily, weekly, student
+# ---------------------------------------------------------------------------
+
+@bp.route("/api/reports/daily", methods=["GET"])
+def api_reports_daily():
+    """GET /api/reports/daily?date=YYYY-MM-DD"""
+    date_str = (request.args.get("date") or datetime.now().strftime("%Y-%m-%d")).strip()[:10]
+    result = report_daily(date_str)
+    return jsonify(result)
+
+
+@bp.route("/api/reports/weekly", methods=["GET"])
+def api_reports_weekly():
+    """Last 7 days attendance summary."""
+    today = datetime.now()
+    total_present = 0
+    total_absent = 0
+    by_day = []
+    for i in range(7):
+        d = today - timedelta(days=i)
+        date_str = d.strftime("%Y-%m-%d")
+        view = attendance_view_by_date(date_str)
+        day_present = sum(r.get("present", 0) for r in view)
+        day_absent = sum(r.get("absent", 0) for r in view)
+        total_present += day_present
+        total_absent += day_absent
+        by_day.append({"date": date_str, "present": day_present, "absent": day_absent})
+    return jsonify({
+        "period": "last_7_days",
+        "total_present": total_present,
+        "total_absent": total_absent,
+        "total_students": total_present + total_absent,
+        "attendance_percentage": round(total_present / (total_present + total_absent) * 100, 1) if (total_present + total_absent) else 0,
+        "by_day": by_day,
+    })
+
+
+@bp.route("/api/reports/student/<int:student_id>", methods=["GET"])
+def api_reports_student(student_id):
+    """Student attendance report: total_classes, present, absent, percentage."""
+    result = report_student(student_id)
+    if result is None:
+        return jsonify({"error": "Student not found"}), 404
+    return jsonify(result)
+
+
+# ---------------------------------------------------------------------------
 # Email report (absentees)
 # ---------------------------------------------------------------------------
 
+def _validate_smtp_credentials(c=None):
+    """Try SMTP login. Returns (True, None) if OK, (False, error_message) otherwise."""
+    if c is None:
+        from config import get_mail_config
+        c = get_mail_config()
+    if not c.get("server") or not c.get("username") or not c.get("password"):
+        return False, "Mail server, username, and password are required."
+    try:
+        with smtplib.SMTP(c["server"], c["port"], timeout=15) as server:
+            if c.get("use_tls"):
+                server.starttls()
+            server.login(c["username"], c["password"])
+        return True, None
+    except Exception as e:
+        err = str(e).strip().lower()
+        # Gmail rejects normal password with these messages
+        if any(x in err for x in ("535", "534", "application-specific", "app password", "authentication failed", "username and password not accepted", "invalid credentials")):
+            return False, (
+                "Gmail does not accept your normal password. You must use an App Password. "
+                "Steps: 1) Turn on 2-Step Verification in your Google Account. "
+                "2) Go to https://myaccount.google.com/apppasswords and create an App Password for 'Mail'. "
+                "3) Use that 16-character password here (not your Gmail login password)."
+            )
+        return False, str(e).strip() or "Connection failed"
+
+
 def _send_email(to_email, subject, body_text):
     """Send a plain-text email. Returns (True, None) on success, (False, error_message) on failure."""
-    from config import is_email_configured, MAIL_SERVER, MAIL_PORT, MAIL_USE_TLS, MAIL_USERNAME, MAIL_PASSWORD, MAIL_FROM
+    from config import is_email_configured, get_mail_config
     if not is_email_configured():
-        return False, "Email is not configured. Set MAIL_SERVER, MAIL_USERNAME, MAIL_PASSWORD (and optionally MAIL_FROM) in environment."
+        return False, "Email is not configured. Set mail and password in Settings."
+    c = get_mail_config()
     to_email = (to_email or "").strip()
     if not to_email or "@" not in to_email:
         return False, "Invalid recipient email."
     try:
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        msg["From"] = MAIL_FROM or MAIL_USERNAME
+        msg["From"] = c["from_addr"] or c["username"]
         msg["To"] = to_email
         msg.attach(MIMEText(body_text, "plain", "utf-8"))
-        with smtplib.SMTP(MAIL_SERVER, MAIL_PORT) as server:
-            if MAIL_USE_TLS:
+        with smtplib.SMTP(c["server"], c["port"]) as server:
+            if c["use_tls"]:
                 server.starttls()
-            server.login(MAIL_USERNAME, MAIL_PASSWORD)
+            server.login(c["username"], c["password"])
             server.sendmail(msg["From"], to_email, msg.as_string())
         return True, None
     except Exception as e:
@@ -391,7 +487,7 @@ def _handle_send_absentees_email(params, report_email):
 
     from config import is_email_configured
     if not is_email_configured():
-        return "Email sending is not configured on the server. Your admin needs to set MAIL_SERVER, MAIL_USERNAME, and MAIL_PASSWORD in the environment to send reports."
+        return "Email sending is not configured. Set mail server, username, and password in **Settings** → **Email (SMTP)** (or in .env)."
 
     lines = ["Absentees Report – AI Attendance", "=" * 40, ""]
     for date_str in dates_to_use:
@@ -413,6 +509,100 @@ def _handle_send_absentees_email(params, report_email):
     if ok:
         return f"Report sent to **{report_email}** for {section}, {session_val}" + (f" (last {len(dates_to_use)} days)." if len(dates_to_use) > 1 else ".")
     return f"Could not send email: {err}"
+
+
+@bp.route("/api/settings/mail", methods=["GET"])
+def api_get_mail_settings():
+    """Return mail email and whether password is set (simple form: mail + password only)."""
+    from config import get_mail_config
+    c = get_mail_config()
+    return jsonify({
+        "mail_username": c["username"],
+        "password_set": bool(c["password"]),
+    })
+
+
+@bp.route("/api/settings/mail", methods=["POST"])
+def api_save_mail_settings():
+    """Save mail (email) + password. Uses Gmail SMTP. Validates credentials and sends one demo email on success."""
+    from models import set_mail_settings_from_db
+    data = request.get_json() or {}
+    username = (data.get("mail_username") or data.get("mail") or "").strip()
+    password = (data.get("mail_password") or data.get("password") or "").strip() or None
+    if not username or "@" not in username:
+        return jsonify({"ok": False, "error": "Enter a valid email address."}), 400
+    if not password:
+        return jsonify({"ok": False, "error": "Enter your mail password (for Gmail use an App Password)."}), 400
+    # Fixed Gmail SMTP
+    set_mail_settings_from_db(
+        server="smtp.gmail.com",
+        port=587,
+        use_tls=True,
+        username=username,
+        password=password,
+        from_addr=username,
+    )
+    from config import get_mail_config
+    c = get_mail_config()
+    credentials_ok, err_msg = _validate_smtp_credentials(c)
+    if not credentials_ok:
+        return jsonify({
+            "ok": False,
+            "error": "Credentials incorrect. " + (err_msg or "Check email and password."),
+            "credentials_ok": False,
+        }), 400
+    # Send one demo email to the same address
+    demo_sent = False
+    body = "This is a demo email from AI Attendance.\n\nYour email and password are correct. You can now send reports and get AI answers by email.\n\n— Attendance Management System"
+    ok_send, _ = _send_email(username, "AI Attendance – Demo Email", body)
+    if ok_send:
+        demo_sent = True
+    return jsonify({
+        "ok": True,
+        "message": "Credentials correct. " + ("Demo email sent to your inbox." if demo_sent else "Demo email could not be sent."),
+        "credentials_ok": True,
+        "demo_sent": demo_sent,
+    })
+
+
+@bp.route("/api/chat/email-reply", methods=["POST"])
+def api_email_reply():
+    """Send the AI reply text to the user's email (e.g. 'Email me this reply')."""
+    from config import is_email_configured
+    data = request.get_json() or {}
+    to_email = (data.get("to_email") or data.get("email") or "").strip()
+    reply_text = (data.get("reply_text") or "").strip()
+    subject = (data.get("subject") or "AI Attendance – Reply").strip()
+    if not to_email or "@" not in to_email:
+        return jsonify({"ok": False, "error": "Provide a valid email address."}), 400
+    if not reply_text:
+        return jsonify({"ok": False, "error": "No reply text to send."}), 400
+    if not is_email_configured():
+        return jsonify({"ok": False, "error": "Email not configured. Set mail and password in Settings."}), 503
+    ok, err = _send_email(to_email, subject, reply_text)
+    if ok:
+        return jsonify({"ok": True, "message": "Reply sent to " + to_email})
+    return jsonify({"ok": False, "error": err}), 500
+
+
+@bp.route("/api/reports/send-demo-email", methods=["POST"])
+def api_send_demo_email():
+    """Send a single demo/test email to the given address. Use to verify MAIL_* config."""
+    from config import is_email_configured
+    data = request.get_json() or {}
+    to_email = (data.get("email") or "").strip()
+    if not to_email or "@" not in to_email:
+        return jsonify({"ok": False, "error": "Provide a valid 'email' in the request body."}), 400
+    from config import email_config_error_message
+    if not is_email_configured():
+        err_msg = email_config_error_message() or "Email not configured."
+        return jsonify({"ok": False, "error": "Email not configured. " + err_msg}), 503
+    body = "This is a demo email from AI Attendance.\n\nIf you received this, email sending is working.\n\n— Attendance Management System"
+    subject = "AI Attendance – Demo Email"
+    ok, err = _send_email(to_email, subject, body)
+    if ok:
+        return jsonify({"ok": True, "message": "Demo email sent to " + to_email})
+    return jsonify({"ok": False, "error": err}), 500
 
 
 # ---------------------------------------------------------------------------
@@ -701,6 +891,30 @@ def _handle_absent_more_than(params):
     return {"period": date_start_str + " to " + date_end_str, "min_absent_days": days, "count": len(students), "students": students[:30], "truncated": len(students) > 30}
 
 
+def _handle_attendance_insights(params):
+    """Last 7 days: sections with highest absence, students absent more than 3 times. Summary for AI to format."""
+    today = datetime.now()
+    date_end_str = today.strftime("%Y-%m-%d")
+    date_start = today - timedelta(days=6)
+    date_start_str = date_start.strftime("%Y-%m-%d")
+    view_by_section = {}
+    for i in range(7):
+        d = today - timedelta(days=i)
+        date_str = d.strftime("%Y-%m-%d")
+        view = attendance_view_by_date(date_str)
+        for row in view:
+            sn = row.get("section_name", "")
+            view_by_section[sn] = view_by_section.get(sn, 0) + (row.get("absent", 0) or 0)
+    sections_most_absent = sorted(view_by_section.items(), key=lambda x: -x[1])[:5]
+    students_absent_3_plus = students_absent_more_than_days(3, date_start_str, date_end_str)
+    return {
+        "period": "last_7_days",
+        "sections_highest_absence": [{"section": s, "absent_count": c} for s, c in sections_most_absent],
+        "students_absent_more_than_3_times": [{"name": s.get("name"), "roll_no": s.get("roll_no"), "section_name": s.get("section_name"), "absent_days": s.get("absent_days")} for s in students_absent_3_plus[:20]],
+        "summary": f"Last 7 days: {len(sections_most_absent)} sections with absences; {len(students_absent_3_plus)} students absent 3+ times.",
+    }
+
+
 @bp.route("/api/chat", methods=["POST"])
 def api_chat():
     from ai_intent_engine import interpret_question
@@ -724,6 +938,26 @@ def api_chat():
 
     intent = (intent_data.get("intent") or "general_question").strip().lower()
     q_lower = (question or "").lower()
+    q_stripped = (question or "").strip()
+    words = q_lower.split()
+    # Don't treat greetings or casual chat as section/session follow-ups (they were wrongly triggering "Which session?")
+    _greetings = frozenset(("hi", "hello", "hey", "hlo", "hloo", "hlw", "hii", "helloo", "hellooo", "yo", "sup", "gm", "gn", "good morning", "good afternoon", "good evening", "thanks", "thank you", "ok", "okay", "bye"))
+    is_greeting = q_stripped.lower() in _greetings or (len(words) == 1 and words[0] in _greetings)
+    # If OpenAI returned general_question but the message looks like a section/session follow-up (e.g. "ECE A", "ece a morning"), treat as send_absentees_email so we don't call the API again
+    question_like = any(w in q_lower for w in ("who", "how", "what", "which", "when", "today", "yesterday", "many", "summary", "list", "give", "show", "was", "were"))
+    if intent == "general_question" and not is_greeting and len(q_stripped) <= 45 and "?" not in q_stripped and not question_like:
+        if words == ["morning"] or words == ["afternoon"]:
+            intent = "send_absentees_email"
+            intent_data = {"intent": "send_absentees_email", "section": None, "session": "morning" if words == ["morning"] else "afternoon"}
+        elif re.match(r"^all\s*sections?\s*(morning|afternoon)?\s*$", q_lower) or words == ["all"]:
+            intent = "send_absentees_email"
+            intent_data = {"intent": "send_absentees_email", "section": "ALL", "session": "morning" if "morning" in q_lower else "afternoon" if "afternoon" in q_lower else None}
+        elif len(words) <= 5 and all(c.isalnum() or c.isspace() for c in q_lower):
+            part = re.sub(r"\s*morning\s*|\s*afternoon\s*", " ", q_lower).strip()
+            # Only treat as section if it looks like a section name (e.g. ECE A, CSE), not a single greeting-like word
+            if part and part not in ("morning", "afternoon") and len(part) >= 2 and part not in _greetings:
+                intent = "send_absentees_email"
+                intent_data = {"intent": "send_absentees_email", "section": part.title(), "session": "morning" if "morning" in q_lower else "afternoon" if "afternoon" in q_lower else None}
     # Force date for attendance queries: if user didn't mention a date, use today (avoid wrong dates like 2023-10-04)
     date_mentioned = (
         "today" in q_lower or "yesterday" in q_lower or "last monday" in q_lower
@@ -744,6 +978,20 @@ def api_chat():
     params = _apply_smart_defaults(intent_data)
     report_email = (data.get("report_email") or "").strip() or None
 
+    # Follow-up memory: use last context for "send them to my email"
+    if intent == "send_absentees_email":
+        sect = (intent_data.get("section") or "").strip() or None
+        sess_val = (intent_data.get("session") or "").strip().lower() or None
+        if (not sect or sect.lower() in ("null", "all")) and (not sess_val or sess_val == "all"):
+            last_section = session.get("last_section")
+            last_date = session.get("last_date")
+            if last_section:
+                intent_data["section"] = last_section
+            if last_date:
+                intent_data["date"] = last_date
+            if not sess_val and last_section:
+                intent_data["session"] = session.get("last_session") or "morning"
+
     try:
         if intent == "send_absentees_email":
             text = _handle_send_absentees_email(intent_data, report_email)
@@ -751,6 +999,12 @@ def api_chat():
 
         if intent == "attendance_list":
             result = _handle_attendance_list(params)
+            # Store context for follow-up "send them to my email"
+            if isinstance(result, dict) and result.get("status") == "absent" and result.get("list"):
+                session["last_absentees"] = [{"name": r.get("name"), "roll_no": r.get("roll_no")} for r in result.get("list", [])[:50]]
+                session["last_section"] = params.get("section") or "ALL"
+                session["last_date"] = params.get("date") or datetime.now().strftime("%Y-%m-%d")
+                session["last_session"] = params.get("session") or "ALL"
             text = format_result_with_ai(result)
             return jsonify({"response": text})
 
@@ -796,6 +1050,11 @@ def api_chat():
 
         if intent == "attendance_week":
             result = _handle_attendance_week(params)
+            text = format_result_with_ai(result)
+            return jsonify({"response": text})
+
+        if intent == "attendance_insights":
+            result = _handle_attendance_insights(params)
             text = format_result_with_ai(result)
             return jsonify({"response": text})
 

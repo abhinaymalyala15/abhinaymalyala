@@ -69,7 +69,7 @@ OPENAI_TEMPERATURE = float(os.environ.get("OPENAI_TEMPERATURE", "0.2"))
 CHAT_RATE_LIMIT_PER_MINUTE = int(os.environ.get("CHAT_RATE_LIMIT_PER_MINUTE", "10"))
 CHAT_DAILY_CAP = int(os.environ.get("CHAT_DAILY_CAP", "200"))
 
-# Email (for sending absentee reports). Set in .env or Environment for reports to work.
+# Email (for sending absentee reports). Set in .env, or in Settings → Email (SMTP) on the website.
 MAIL_SERVER = os.environ.get("MAIL_SERVER", "")
 MAIL_PORT = int(os.environ.get("MAIL_PORT", "587"))
 MAIL_USE_TLS = os.environ.get("MAIL_USE_TLS", "1").strip().lower() in ("1", "true", "yes")
@@ -78,8 +78,58 @@ MAIL_PASSWORD = (os.environ.get("MAIL_PASSWORD") or "").strip()
 MAIL_FROM = (os.environ.get("MAIL_FROM") or MAIL_USERNAME or "").strip()
 
 
+def get_mail_config():
+    """Return dict: server, port, use_tls, username, password, from_addr. DB (Settings) overrides env."""
+    try:
+        from models import get_mail_settings_from_db
+        db = get_mail_settings_from_db()
+    except Exception:
+        db = {}
+    def from_env(key, default=""):
+        v = os.environ.get(key, default)
+        return (v or "").strip() if isinstance(v, str) else str(v)
+    server = (db.get("mail_server") or from_env("MAIL_SERVER")).strip()
+    port_raw = db.get("mail_port") or from_env("MAIL_PORT", "587")
+    try:
+        port = int(str(port_raw).strip()) if port_raw else 587
+    except (ValueError, TypeError):
+        port = 587
+    use_tls_raw = (db.get("mail_use_tls") or from_env("MAIL_USE_TLS", "1")).strip().lower()
+    use_tls = use_tls_raw in ("1", "true", "yes")
+    username = (db.get("mail_username") or from_env("MAIL_USERNAME")).strip()
+    password = (db.get("mail_password") or from_env("MAIL_PASSWORD")).strip()
+    from_addr = (db.get("mail_from") or from_env("MAIL_FROM") or username).strip()
+    return {
+        "server": server,
+        "port": port,
+        "use_tls": use_tls,
+        "username": username,
+        "password": password,
+        "from_addr": from_addr or username,
+    }
+
+
 def is_email_configured():
-    return bool(MAIL_SERVER and MAIL_USERNAME and MAIL_PASSWORD)
+    c = get_mail_config()
+    return bool(c["server"] and c["username"] and c["password"])
+
+
+def email_config_error_message():
+    """Return a short message describing what is missing for email (for UI/API)."""
+    c = get_mail_config()
+    missing = []
+    if not c["server"]:
+        missing.append("Mail server")
+    if not c["username"]:
+        missing.append("Mail username (email)")
+    if not c["password"]:
+        missing.append("Mail password")
+    if not missing:
+        return None
+    msg = "Set " + ", ".join(missing)
+    if "Mail password" in missing:
+        msg += ". For Gmail use an App Password: https://support.google.com/accounts/answer/185833"
+    return msg
 
 # MySQL (when USE_SQLITE is False)
 MYSQL_HOST = os.environ.get("MYSQL_HOST", "localhost")

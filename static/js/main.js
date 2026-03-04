@@ -67,8 +67,16 @@
             headers: { 'Content-Type': 'application/json' },
             body: body ? JSON.stringify(body) : undefined
         }).then(function (r) {
-            if (!r.ok) return r.json().then(function (d) { throw new Error(d.error || 'Request failed'); });
-            return r.json();
+            var contentType = r.headers.get('Content-Type') || '';
+            var isJson = contentType.indexOf('application/json') !== -1;
+            if (!r.ok) {
+                if (isJson) {
+                    return r.json().then(function (d) { throw new Error(d.error || d.message || 'Request failed'); });
+                }
+                return r.text().then(function (text) { throw new Error('Request failed (' + r.status + ')'); });
+            }
+            if (isJson) return r.json();
+            return r.text().then(function (t) { try { return JSON.parse(t); } catch (e) { return {}; } });
         });
     }
 
@@ -381,7 +389,7 @@
         var today = new Date().toISOString().slice(0, 10);
         var defaultSession = typeof getDefaultSession === 'function' ? getDefaultSession() : 'morning';
         var wrap = document.getElementById('pageMark');
-        wrap.innerHTML = '<div class="page-header"><h2>Mark Attendance</h2><p>Select section, date and session then mark status</p></div>' +
+        wrap.innerHTML = '<div class="page-header"><h2>Mark Attendance</h2><p>Select section, date and session. Default is Present; toggle Absent as needed, then Save.</p></div>' +
             '<div class="toolbar" id="markToolbar">' +
             '<div class="form-group"><label>Section</label><select id="markSection"><option value="">Select section</option></select></div>' +
             '<div class="form-group"><label>Date</label><input type="date" id="markDate" value="' + today + '"></div>' +
@@ -389,8 +397,8 @@
             '<button type="button" class="btn btn-primary" id="markLoadBtn">Load Students</button>' +
             '</div>' +
             '<div id="markWarning" class="warning-banner" style="display:none"></div>' +
-            '<div class="actions-row"><input type="text" class="search-input" id="markSearch" placeholder="Search student"><button type="button" class="btn btn-secondary btn-sm" id="markAllPresent">Select All Present</button><button type="button" class="btn btn-secondary btn-sm" id="markAllAbsent">Select All Absent</button></div>' +
-            '<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Roll No</th><th>Name</th><th>Status</th></tr></thead><tbody id="markTbody"></tbody></table></div>' +
+            '<div class="actions-row"><input type="text" class="search-input" id="markSearch" placeholder="Search student"><button type="button" class="btn btn-secondary btn-sm" id="markAllPresent">Mark All Present</button><button type="button" class="btn btn-secondary btn-sm" id="markResetAttendance">Reset Attendance</button></div>' +
+            '<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Roll No</th><th>Name</th><th>Present</th><th>Absent</th></tr></thead><tbody id="markTbody"></tbody></table></div>' +
             '<div id="markSummary" class="summary-panel" style="display:none"></div>' +
             '<div class="actions-row" style="align-items:center;margin-top:16px"><button type="button" class="btn btn-primary" id="markSaveBtn" disabled>Save Attendance</button><span class="keyboard-hint" id="markSaveHint">Ctrl+S when ready</span></div>';
         loadSectionsForSelect(document.getElementById('markSection'));
@@ -402,7 +410,7 @@
         };
         document.getElementById('markSearch').oninput = filterMarkTable;
         document.getElementById('markAllPresent').onclick = function () { markAttendanceStudents.forEach(function (s) { s.status = 'present'; }); renderMarkTable(); updateMarkSummary(); };
-        document.getElementById('markAllAbsent').onclick = function () { markAttendanceStudents.forEach(function (s) { s.status = 'absent'; }); renderMarkTable(); updateMarkSummary(); };
+        document.getElementById('markResetAttendance').onclick = function () { markAttendanceStudents.forEach(function (s) { s.status = 'present'; }); renderMarkTable(); updateMarkSummary(); };
         document.getElementById('markSaveBtn').onclick = saveMarkAttendance;
         document.addEventListener('keydown', function (e) {
             if (e.ctrlKey && e.key === 's') { e.preventDefault(); if (!document.getElementById('markSaveBtn').disabled) saveMarkAttendance(); }
@@ -443,18 +451,22 @@
         var tbody = document.getElementById('markTbody');
         tbody.innerHTML = list.map(function (s) {
             var status = s.status || 'present';
-            return '<tr data-id="' + s.student_id + '"><td>' + escapeHtml(s.roll_no) + '</td><td>' + escapeHtml(s.name) + '</td><td><button type="button" class="status-toggle ' + status + '" data-id="' + s.student_id + '">' + (status === 'present' ? 'Present' : 'Absent') + '</button></td></tr>';
+            var presentActive = status === 'present' ? ' active' : '';
+            var absentActive = status === 'absent' ? ' active' : '';
+            return '<tr data-id="' + s.student_id + '"><td>' + escapeHtml(s.roll_no) + '</td><td>' + escapeHtml(s.name) + '</td><td><button type="button" class="btn-mark-present status-toggle' + presentActive + '" data-id="' + s.student_id + '">Present</button></td><td><button type="button" class="btn-mark-absent status-toggle' + absentActive + '" data-id="' + s.student_id + '">Absent</button></td></tr>';
         }).join('');
-        tbody.querySelectorAll('.status-toggle').forEach(function (btn) {
+        tbody.querySelectorAll('.btn-mark-present').forEach(function (btn) {
             btn.onclick = function () {
                 var id = parseInt(this.getAttribute('data-id'), 10);
                 var rec = markAttendanceStudents.find(function (x) { return x.student_id === id; });
-                if (rec) {
-                    rec.status = rec.status === 'present' ? 'absent' : 'present';
-                    this.textContent = rec.status === 'present' ? 'Present' : 'Absent';
-                    this.className = 'status-toggle ' + rec.status;
-                    updateMarkSummary();
-                }
+                if (rec) { rec.status = 'present'; renderMarkTable(); updateMarkSummary(); }
+            };
+        });
+        tbody.querySelectorAll('.btn-mark-absent').forEach(function (btn) {
+            btn.onclick = function () {
+                var id = parseInt(this.getAttribute('data-id'), 10);
+                var rec = markAttendanceStudents.find(function (x) { return x.student_id === id; });
+                if (rec) { rec.status = 'absent'; renderMarkTable(); updateMarkSummary(); }
             };
         });
     }
@@ -573,7 +585,15 @@
             '<div class="settings-card">' +
             '<h3 class="settings-heading">Preferences</h3>' +
             '<div class="form-group"><label for="settingsDefaultSession">Default session (Mark Attendance)</label><select id="settingsDefaultSession"><option value="morning"' + (defaultSession === 'morning' ? ' selected' : '') + '>Morning</option><option value="afternoon"' + (defaultSession === 'afternoon' ? ' selected' : '') + '>Afternoon</option></select><p class="settings-muted">Pre-fill the session when you open Mark Attendance.</p></div>' +
-            '<div class="form-group"><label for="settingsReportEmail">Report recipient email</label><input type="email" id="settingsReportEmail" placeholder="e.g. admin@school.edu" value="' + escapeHtml(reportEmail) + '"><p class="settings-muted">When you ask the AI to &quot;send absentees to my email&quot; or &quot;email last 3 days absentees&quot;, the report will be sent to this address. The AI will ask for section and session (morning/afternoon) if not specified.</p></div>' +
+            '<div class="form-group"><label for="settingsReportEmail">Report recipient email</label><input type="email" id="settingsReportEmail" placeholder="e.g. admin@school.edu" value="' + escapeHtml(reportEmail) + '"><p class="settings-muted">When you ask the AI to &quot;send absentees to my email&quot; or &quot;email last 3 days absentees&quot;, the report will be sent to this address. The AI will ask for section and session (morning/afternoon) if not specified.</p><button type="button" class="btn btn-secondary btn-sm" id="settingsSendTestEmail">Send test email</button></div>' +
+            '</div>' +
+            '<div class="settings-card">' +
+            '<h3 class="settings-heading">Email configuration</h3>' +
+            '<p class="settings-muted">Use your Gmail address and a <strong>Gmail App Password</strong> (not your normal Gmail password). We will check credentials and send a demo email.</p>' +
+            '<p class="settings-muted" style="margin-bottom:12px;"><a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">Create App Password</a> (requires 2-Step Verification).</p>' +
+            '<div class="form-group"><label for="settingsMailEmail">Mail (email)</label><input type="email" id="settingsMailEmail" placeholder="your-email@gmail.com" value=""></div>' +
+            '<div class="form-group"><label for="settingsMailPassword">App Password</label><input type="password" id="settingsMailPassword" placeholder="16-character App Password from Google" value="" autocomplete="off"></div>' +
+            '<button type="button" class="btn btn-primary" id="settingsSaveMailBtn">Check and save</button>' +
             '</div>';
         document.getElementById('settingsDefaultSession').onchange = function () {
             setDefaultSession(this.value);
@@ -586,6 +606,63 @@
         document.getElementById('settingsReportEmail').onblur = function () {
             setReportEmail(this.value);
         };
+        var testEmailBtn = document.getElementById('settingsSendTestEmail');
+        if (testEmailBtn) {
+            testEmailBtn.onclick = function () {
+                var email = (document.getElementById('settingsReportEmail').value || '').trim();
+                if (!email || email.indexOf('@') < 0) {
+                    toast('Enter a valid email above first.', 'error');
+                    return;
+                }
+                testEmailBtn.disabled = true;
+                testEmailBtn.textContent = 'Sending…';
+                api('/api/reports/send-demo-email', { method: 'POST', body: { email: email } })
+                    .then(function (data) {
+                        testEmailBtn.disabled = false;
+                        testEmailBtn.textContent = 'Send test email';
+                        toast(data.message || 'Test email sent. Check your inbox.');
+                    })
+                    .catch(function (err) {
+                        testEmailBtn.disabled = false;
+                        testEmailBtn.textContent = 'Send test email';
+                        toast(err.message || 'Could not send. Configure email in Settings → Email (SMTP).', 'error');
+                    });
+            };
+        }
+        // Load current mail and wire Check and save
+        api('/api/settings/mail').then(function (data) {
+            if (data.mail_username) document.getElementById('settingsMailEmail').value = data.mail_username;
+        }).catch(function () {});
+        var saveMailBtn = document.getElementById('settingsSaveMailBtn');
+        if (saveMailBtn) {
+            saveMailBtn.onclick = function () {
+                var email = (document.getElementById('settingsMailEmail').value || '').trim();
+                var password = (document.getElementById('settingsMailPassword').value || '').trim();
+                if (!email || email.indexOf('@') < 0) {
+                    toast('Enter a valid email address.', 'error');
+                    return;
+                }
+                if (!password) {
+                    toast('Enter your mail password (Gmail: use App Password).', 'error');
+                    return;
+                }
+                saveMailBtn.disabled = true;
+                saveMailBtn.textContent = 'Checking…';
+                api('/api/settings/mail', {
+                    method: 'POST',
+                    body: { mail_username: email, mail_password: password }
+                }).then(function (data) {
+                    saveMailBtn.disabled = false;
+                    saveMailBtn.textContent = 'Check and save';
+                    toast(data.message || 'Saved. Check your inbox for the demo email.');
+                    document.getElementById('settingsMailPassword').value = '';
+                }).catch(function (err) {
+                    saveMailBtn.disabled = false;
+                    saveMailBtn.textContent = 'Check and save';
+                    toast(err.message || 'Credentials wrong or failed.', 'error');
+                });
+            };
+        }
     }
 
     function openLogoutModal() {
@@ -695,6 +772,14 @@
         s = s.replace(/\n/g, '<br>');
         return s;
     }
+    function chatAppendSentNotice(text, isError) {
+        if (!chatMessages) return;
+        var div = document.createElement('div');
+        div.className = 'chat-msg chat-sent' + (isError ? ' chat-sent-error' : '');
+        div.innerHTML = '<span class="chat-sent-text">' + escapeHtml(text) + '</span>';
+        chatMessages.appendChild(div);
+        chatScrollToBottom();
+    }
     function chatAppendMessage(role, text) {
         if (!chatMessages) return;
         chatHideWelcome();
@@ -705,6 +790,33 @@
             ? '<span class="chat-msg-body">' + formatAiMessage(text) + '</span>'
             : escapeHtml(text).replace(/\n/g, '<br>');
         div.innerHTML = body + '<span class="chat-msg-time">' + escapeHtml(time) + '</span>';
+        if (role === 'ai' && text) {
+            var emailBtn = document.createElement('button');
+            emailBtn.type = 'button';
+            emailBtn.className = 'chat-email-reply-btn';
+            emailBtn.textContent = 'Email me this reply';
+            emailBtn.onclick = function () {
+                var to = getReportEmail();
+                if (!to || to.indexOf('@') < 0) {
+                    toast('Set Report recipient email in Settings first.', 'error');
+                    return;
+                }
+                emailBtn.disabled = true;
+                emailBtn.textContent = 'Sending…';
+                api('/api/chat/email-reply', { method: 'POST', body: { to_email: to, reply_text: text, subject: 'AI Attendance – Reply' } })
+                    .then(function () {
+                        emailBtn.disabled = false;
+                        emailBtn.textContent = 'Email me this reply';
+                        toast('Reply sent to your email.');
+                    })
+                    .catch(function (err) {
+                        emailBtn.disabled = false;
+                        emailBtn.textContent = 'Email me this reply';
+                        toast(err.message || 'Could not send.', 'error');
+                    });
+            };
+            div.appendChild(emailBtn);
+        }
         chatMessages.appendChild(div);
         chatScrollToBottom();
     }
@@ -734,7 +846,8 @@
         api('/api/chat', { method: 'POST', body: { question: q, report_email: reportEmail || undefined } })
             .then(function (data) {
                 chatShowLoading(false);
-                chatAppendMessage('ai', data.response || 'No response.');
+                var responseText = data.response || 'No response.';
+                chatAppendMessage('ai', responseText);
             })
             .catch(function (err) {
                 chatShowLoading(false);
@@ -768,6 +881,15 @@
             if (msg && chatInput) {
                 chatInput.value = msg;
                 chatSend();
+            }
+        });
+    });
+    document.querySelectorAll('.chat-suggestion-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var msg = this.getAttribute('data-msg');
+            if (msg && chatInput) {
+                chatInput.value = msg;
+                chatInput.focus();
             }
         });
     });

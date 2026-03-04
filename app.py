@@ -44,6 +44,15 @@ def inject_assets_version():
 # Initialize DB when app is loaded (needed for gunicorn / Render)
 init_db()
 
+# Automatic DB backup (SQLite, every 24h, keep last 30)
+try:
+    from utils.backup_db import run_backup_if_due
+    _ran, _res = run_backup_if_due()
+    if _ran and _res and isinstance(_res, str):
+        print("DB backup:", _res)
+except Exception as e:
+    logging.getLogger(__name__).debug("Backup skip: %s", e)
+
 
 @app.route("/dashboard")
 def dashboard_redirect():

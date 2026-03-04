@@ -21,31 +21,33 @@ ALLOWED_INTENTS = frozenset({
     "section_most_absent",
     "attendance_week",
     "send_absentees_email",
+    "attendance_insights",
     "general_question",
 })
 
-SYSTEM_PROMPT = """You convert user questions about attendance and students into structured JSON. Be strict: only output valid JSON.
+SYSTEM_PROMPT = """You convert user questions about attendance and students into structured JSON. Be strict: only output valid JSON, no markdown, no explanation.
 
-IMPORTANT: Prefer attendance/student intents whenever the question mentions: attendance, absent, present, students, section, roll number, who didn't come, who skipped, missing, summary, count, how many, which section, low attendance, days absent, came, attended. Use general_question ONLY when clearly unrelated (e.g. weather, jokes).
+IMPORTANT: Prefer attendance/student intents whenever the question mentions: attendance, absent, present, students, section, roll number, who didn't come, who skipped, missing, summary, count, how many, which section, low attendance, days absent, came, attended, issues, problems. Use general_question ONLY when clearly unrelated (e.g. weather, jokes).
 
-Supported intents:
-- attendance_list: who is present/absent (e.g. "who is absent today", "who didn't come", "who skipped", "missing students", "list absent", "who attended morning", "show attendance for today")
-- attendance_summary: overall counts and rates (e.g. "attendance summary", "overall attendance", "whole school today", "how many students absent today", "attendance rate for ECE A today", "how many came today")
-- student_lookup: find student by roll or name (e.g. "find student Rahul", "details of roll number 12", "show student X")
-- student_list: list students (e.g. "list of all students", "list students in ECE A", "students in ECE A")
-- count_students: how many students (e.g. "how many students in ECE A", "total students in system", "number of students in CSE")
+Supported intents (use these exact names):
+- attendance_list: who is present/absent (e.g. "who was absent today", "which students skipped class today", "anyone absent in ECE A this morning", "who didn't come", "list absent", "show attendance for today")
+- attendance_summary: overall counts and rates (e.g. "show attendance summary today", "attendance summary", "overall attendance", "how many students absent today", "attendance rate for ECE A today")
+- student_lookup: find student by roll or name (e.g. "show attendance of Rahul", "find student Rahul", "details of roll number 12")
+- student_list: list students (e.g. "list of all students", "list students in ECE A")
+- count_students: how many students (e.g. "how many students in ECE A", "total students in system")
 - section_lookup: which section is a student in (e.g. "which section is Saketh in?")
-- low_attendance: students below 75% attendance
+- low_attendance: students below 75% attendance (e.g. "which students have attendance below 75%", "list students with low attendance")
 - absent_more_than: students absent more than X days
-- section_most_absent: which section has most absentees today
-- attendance_week: total attendance for this week (last 7 days)
-- send_absentees_email: user wants to receive absentees report by email (e.g. "send absentees to my email", "email me the absentees", "send last 3 days absentees to my email"). Extract section, session, and last_n_days if mentioned (e.g. "last 3 days" -> last_n_days: 3).
+- section_most_absent: which section has most absentees (e.g. "which section had most absences", "which section had most absences today")
+- attendance_week: weekly attendance (e.g. "show weekly attendance summary", "attendance for this week", "last 7 days")
+- send_absentees_email: user wants absentees report by email (e.g. "send absentees to my email", "email me the absentees"). Extract section, session, last_n_days if mentioned.
+- attendance_insights: intelligent analysis (e.g. "any attendance issues this week?", "any problems with attendance?", "give me attendance insights")
 - general_question: only if clearly not about attendance/students/school
 
-Return format (JSON only):
+Return format (JSON only). Always include these keys; use null when not applicable:
 {"intent": "intent_name", "date": "YYYY-MM-DD or null", "section": "Section name or ALL or null", "session": "morning or afternoon or ALL or null", "status": "present or absent or null", "roll_no": "value or null", "student_name": "value or null", "days": number or null, "last_n_days": number or null}
 
-Date rules: Use YYYY-MM-DD. For "today" use actual today. For "yesterday" use yesterday's date. For "23 Feb" use 2026-02-23 (current year). For "01-02-2026" or "1-2-2026" use that date. For "last Monday" use the most recent Monday. Section: extract names like "ECE A", "ECE", "AIML", "CSE" when user says "in ECE A", "for ECE", etc. Session: "morning attendance" -> morning, "afternoon attendance" -> afternoon. Return JSON only, no explanation."""
+Date: Use YYYY-MM-DD. "today" -> actual today. "yesterday" -> yesterday. "23 Feb" -> 2026-02-23. Section: extract ECE A, CSE, AIML when user says "in ECE A", "for ECE". Session: "this morning" -> morning, "afternoon" -> afternoon. Return JSON only."""
 
 
 def parse_date_from_question(question):
@@ -152,6 +154,9 @@ def _parse_intent_json(text):
         return None
     try:
         data = json.loads(m.group(0))
+    except (json.JSONDecodeError, ValueError):
+        return None
+    try:
         if not isinstance(data, dict):
             return None
         intent = data.get("intent")
@@ -172,7 +177,7 @@ def _parse_intent_json(text):
             if key in data and data[key] is not None and not isinstance(data[key], str):
                 data[key] = str(data[key]) if data[key] else None
         return data
-    except json.JSONDecodeError:
+    except Exception:
         return None
 
 
@@ -195,7 +200,8 @@ def _extract_section_from_question(question):
 def _rule_based_intent(q_raw):
     """Fallback when OpenAI is not available: basic intent from keywords."""
     q = q_raw.lower()
-    # Normalize typos and conversational phrases
+    # Normalize typos and conversational phrases (incl. "abscentees" -> absent)
+    q = re.sub(r"\babscentees?\b", "absent", q)
     q = re.sub(r"\babscent\b", "absent", q)
     q = re.sub(r"\babsente?\b", "absent", q)
     q = re.sub(r"\babsentees?\b", "absent", q)
@@ -208,8 +214,13 @@ def _rule_based_intent(q_raw):
     section = _extract_section_from_question(q_raw)
     out = {"intent": "general_question", "date": parsed_date, "section": section or "ALL", "session": "ALL", "status": None, "roll_no": None, "student_name": None, "days": None}
 
+    # attendance_insights: issues this week, problems, insights
+    if "insight" in q or "issues" in q or "problems" in q and "attendance" in q or ("week" in q and ("attendance" in q or "issue" in q)):
+        out["intent"] = "attendance_insights"
+        return out
+
     # section_most_absent: which section has most absentees
-    if "which section" in q and "most absent" in q:
+    if "which section" in q and ("most absent" in q or "most absences" in q):
         out["intent"] = "section_most_absent"
         out["date"] = today
         return out
@@ -252,13 +263,13 @@ def _rule_based_intent(q_raw):
 
     if "how many students" in q:
         out["intent"] = "count_students"
-        out["section"] = section or "ALL"
+        out["section"] = "ALL" if ("each" in q or "every" in q or "all" in q) else (section or "ALL")
         out["date"] = today
         return out
 
     if "total students" in q or "number of students" in q:
         out["intent"] = "count_students"
-        out["section"] = section or "ALL"
+        out["section"] = "ALL" if ("each" in q or "every" in q or "all" in q) else (section or "ALL")
         return out
 
     # send_absentees_email first (before absent_more_than) so "last 3 days absentees to my email" is not treated as absent_more_than
@@ -270,6 +281,32 @@ def _rule_based_intent(q_raw):
         out["last_n_days"] = int(last_n.group(1)) if last_n else None
         out["date"] = parsed_date
         return out
+
+    # Short follow-up replies: "ece a", "ece a morning", "all sections", "all morning" (section/session for email report). Accepts lowercase.
+    # Do not match question-like phrases (who, how many, today, summary, etc.)
+    q_stripped = q_raw.strip()
+    words = q_stripped.lower().split()
+    question_like = any(w in q for w in ("who", "how", "what", "which", "when", "today", "yesterday", "many", "summary", "list", "give", "show", "was", "were", "did", "does"))
+    if len(words) <= 5 and len(q_stripped) <= 45 and "?" not in q_stripped and not question_like:
+        if words == ["morning"] or words == ["afternoon"]:
+            out["intent"] = "send_absentees_email"
+            out["section"] = None
+            out["session"] = "morning" if words == ["morning"] else "afternoon"
+            return out
+        if re.match(r"^all\s*sections?\s*(morning|afternoon)?\s*$", q, re.I) or (words == ["all"]):
+            out["intent"] = "send_absentees_email"
+            out["section"] = "ALL"
+            out["session"] = "morning" if "morning" in q else "afternoon" if "afternoon" in q else None
+            return out
+        if "morning" in q or "afternoon" in q:
+            section_part = re.sub(r"\s*morning\s*|\s*afternoon\s*", " ", q).strip()
+        else:
+            section_part = q.strip()
+        if section_part and section_part not in ("morning", "afternoon") and len(section_part) >= 2 and all(c.isalnum() or c.isspace() for c in section_part):
+            out["intent"] = "send_absentees_email"
+            out["section"] = section_part.title()
+            out["session"] = "morning" if "morning" in q else "afternoon" if "afternoon" in q else None
+            return out
 
     if "absent" in q and ("day" in q or "days" in q or "more than" in q):
         out["intent"] = "absent_more_than"
