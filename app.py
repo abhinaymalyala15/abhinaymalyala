@@ -18,9 +18,15 @@ except ImportError:
 
 from flask import Flask, redirect, url_for
 
-from config import ASSETS_VERSION, SECRET_KEY, get_openai_api_key
+from config import ASSETS_VERSION, SECRET_KEY, get_openai_api_key, USE_SQLITE, SQLITE_PATH
 from models import init_db
 from routes.main import bp as main_bp
+
+# Ensure SQLite DB directory exists (e.g. /data on Render persistent disk)
+if USE_SQLITE and SQLITE_PATH:
+    _db_dir = os.path.dirname(os.path.abspath(SQLITE_PATH))
+    if _db_dir:
+        os.makedirs(_db_dir, exist_ok=True)
 
 # Confirm API key is loaded (uses same loader as chat)
 if get_openai_api_key():
@@ -43,6 +49,8 @@ def inject_assets_version():
 
 # Initialize DB when app is loaded (needed for gunicorn / Render)
 init_db()
+if USE_SQLITE:
+    print("Database:", SQLITE_PATH)
 
 # Automatic DB backup (SQLite, every 24h, keep last 30)
 try:

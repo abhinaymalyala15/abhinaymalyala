@@ -1,5 +1,6 @@
 # Render Blueprint - deploy as Web Service
 # https://render.com/docs/blueprint-spec
+# To keep data across deploys: add a Persistent Disk (mount /data) and set SQLITE_PATH=/data/ai_system.db in Environment.
 services:
   - type: web
     name: ai-attendance-management
@@ -9,4 +10,4 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
-      # Add in Render dashboard: OPENAI_API_KEY, SECRET_KEY, etc.
+      # In Render dashboard add: OPENAI_API_KEY, SECRET_KEY, and SQLITE_PATH=/data/ai_system.db (after adding a disk mounted at /data)

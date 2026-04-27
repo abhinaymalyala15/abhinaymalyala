@@ -56,12 +56,39 @@ Add in the service → Environment:
 
 Optional: `PORT` is set by Render; for email: `MAIL_SERVER`, `MAIL_USERNAME`, `MAIL_PASSWORD`, etc.
 
-### Data persistence on Render
+### Why your data disappears on deploy/refresh
 
-- Render’s filesystem is **ephemeral**: restarts/redeploys wipe the disk, so SQLite data is lost.
-- Options:
-  1. **Render Persistent Disk** (paid): mount a disk and set `SQLITE_PATH` to a path on that disk (e.g. `/data/ai_system.db`).
-  2. **PostgreSQL on Render** (free tier): create a PostgreSQL service, then set `USE_SQLITE=0` and the MySQL-style env vars (or add a small adapter so the app uses the same `config` and `DATABASE_URL`). The app already supports MySQL; PostgreSQL would need a driver and possibly small config changes.
+On **Render**, the app runs on a **temporary disk**. Every time you:
+- **Redeploy** (push to GitHub, or click Deploy),
+- **Restart** the service,
+
+the disk is wiped and a new one is created. So `ai_system.db` is lost and your data is reset.
+
+**Fix: use a Persistent Disk** so the database file is stored on a disk that survives restarts and redeploys.
+
+### Steps: Add a Persistent Disk on Render (data saved across deploys)
+
+1. In **Render Dashboard**, open your **Web Service** (ai-attendance-management).
+2. Go to **Disks** in the left sidebar (or the **Disks** tab).
+3. Click **Add Disk**.
+4. Set:
+   - **Name:** e.g. `attendance-data`
+   - **Mount Path:** `/data`
+   - **Size:** 1 GB is enough.
+5. Save. Render will redeploy the service with the disk attached.
+6. In **Environment** (same service), add:
+   - **Key:** `SQLITE_PATH`
+   - **Value:** `/data/ai_system.db`
+7. Save. Render will redeploy again.
+
+After this, the app will create and use `ai_system.db` on the persistent disk. Your sections, students, and attendance **will persist** across deploys and restarts.
+
+**Check:** After deploy, in the service **Logs** you should see a line like: `Database: /data/ai_system.db`.
+
+### If you don’t use a Persistent Disk
+
+- Data will keep disappearing on every deploy or restart.
+- For a free option without Persistent Disk, you’d need to use an external database (e.g. Render PostgreSQL or a free MySQL host) and set `USE_SQLITE=0` plus the DB env vars (the app supports MySQL).
 
 After you push to GitHub, Render will redeploy automatically if auto-deploy is on.
 
@@ -73,4 +100,4 @@ After you push to GitHub, Render will redeploy automatically if auto-deploy is o
 |-------------------------|--------|
 | Save data daily         | Run `.\scripts\backup_and_push.ps1` (or schedule it) |
 | Push data to GitHub     | Same script: it commits and pushes `data/ai_system_latest.db` |
-| Deploy / run on Render  | Connect repo to Render, set env vars, deploy; use persistent disk or PostgreSQL for production data |
+| Deploy / run on Render  | Connect repo to Render, set env vars, **add Persistent Disk** and set `SQLITE_PATH=/data/ai_system.db` so data is not cleared on deploy |
